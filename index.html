@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#171329">
+<meta name="description" content="Nuestra Aventura — aplicación familiar de viaje">
+<link rel="manifest" href="manifest.json">
+<title>Nuestra Aventura · Family Hub</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<div id="offline" class="offline hidden">Sin conexión · los datos locales siguen disponibles y se sincronizarán al volver.</div>
+<div id="authView" class="auth-screen">
+  <div class="auth-card">
+    <div class="brand"><div class="brand-mark">✦</div><div><strong>Nuestra</strong><span>Aventura</span></div></div>
+    <h1>Tu viaje. <em>En familia.</em></h1>
+    <p class="muted">Inicia sesión o crea tu cuenta para sincronizar el viaje entre teléfonos.</p>
+    <div class="tabs"><button class="tab active" data-auth="login">Entrar</button><button class="tab" data-auth="signup">Crear cuenta</button></div>
+    <form id="authForm">
+      <input id="authEmail" type="email" placeholder="Email" required>
+      <input id="authPassword" type="password" placeholder="Contraseña" minlength="6" required>
+      <button class="primary full" type="submit" id="authSubmit">Entrar</button>
+    </form>
+    <p id="authMsg" class="auth-msg"></p>
+    <div class="divider">o</div>
+    <button class="ghost full" id="demoLocalBtn">Continuar sin cuenta (modo offline)</button>
+    <small>Para sincronización real entre personas necesitas una cuenta y un proyecto Supabase conectado.</small>
+  </div>
+</div>
+
+<div id="app" class="app-shell hidden">
+<aside id="sidebar" class="sidebar">
+  <div class="brand"><div class="brand-mark">✦</div><div><strong>Nuestra</strong><span>Aventura</span></div></div>
+  <nav>
+    <button class="nav-item active" data-view="home">⌂ <span>Inicio</span></button>
+    <button class="nav-item" data-view="itinerary">◷ <span>Itinerario</span></button>
+    <button class="nav-item" data-view="map">⌖ <span>Mapa & familia</span></button>
+    <button class="nav-item" data-view="places">✦ <span>Lugares</span></button>
+    <button class="nav-item" data-view="packing">◇ <span>Equipaje</span></button>
+    <button class="nav-item" data-view="airport">✈ <span>Viaje / aeropuerto</span></button>
+    <button class="nav-item" data-view="food">♡ <span>Comida</span></button>
+    <button class="nav-item" data-view="activities">✧ <span>Actividades</span></button>
+    <button class="nav-item" data-view="chat">◌ <span>Familia</span></button>
+    <button class="nav-item" data-view="assistant">✦ <span>NOVA</span></button>
+    <button class="nav-item" data-view="settings">⚙ <span>Grupo</span></button>
+  </nav>
+  <div class="sidebar-footer">
+    <button class="mini-btn" id="themeBtn">◐ Tema</button>
+    <button class="mini-btn" id="signOutBtn">Salir</button>
+  </div>
+</aside>
+
+<main class="main">
+<header class="topbar">
+  <button class="hamburger" id="menuBtn">☰</button>
+  <div class="crumb">FAMILY HUB <span>/</span> <strong id="pageName">Inicio</strong></div>
+  <div class="top-actions"><button class="icon-btn" id="notifyBtn">♢<i></i></button><div class="avatar" id="userAvatar">M</div></div>
+</header>
+
+<section id="view-home" class="view active-view">
+<div class="hero"><div><div class="eyebrow">✦ FAMILY ADVENTURE OS</div><h1>Todo el viaje.<br><em>En un solo lugar.</em></h1><p>Planifica, comparte y mantén a todos sincronizados.</p><div class="hero-actions"><button class="primary" data-jump="itinerary">Ver itinerario →</button><button class="ghost" data-jump="map">Ver familia</button></div></div><div class="orb"><div class="orb-core">✦</div><span class="orbit o1">TRIP</span><span class="orbit o2">FAMILY</span><span class="orbit o3">MEMORIES</span></div></div>
+<div class="section-head"><div><span class="eyebrow">OVERVIEW</span><h2 id="tripTitle">Nuestra aventura</h2></div><span class="live">● SYNC</span></div>
+<div class="widget-grid">
+<article class="widget countdown"><div class="widget-top"><span>PRÓXIMA AVENTURA</span><b>↗</b></div><div class="big-number" id="daysLeft">—</div><div class="muted">días para salir</div><div class="progress"><i id="tripProgress"></i></div><small id="tripDates">—</small></article>
+<article class="widget weather"><div class="widget-top"><span>DESTINO</span><b>⌖</b></div><h3 id="destination">Blowing Rock</h3><div class="weather-row"><span class="weather-icon">☼</span><strong id="weatherTemp">—°</strong><div><small id="weatherDesc">Tiempo</small><span id="weatherMeta">Cargando…</span></div></div></article>
+<article class="widget"><div class="widget-top"><span>CHECKLIST</span><b>✓</b></div><div class="ring"><span id="packPct">0%</span></div><div><h3>Equipaje</h3><p class="muted" id="packSub">0 de 0</p></div></article>
+<article class="widget family-widget"><div class="widget-top"><span>FAMILY PULSE</span><b>◌</b></div><div class="family-avatars" id="familyAvatars"></div><h3 id="familyCount">Familia</h3><p class="muted" id="familySync">Sincronización activa</p></article>
+</div>
+<div class="two-col"><article class="panel"><div class="panel-head"><div><span class="eyebrow">NEXT UP</span><h2>Próximamente</h2></div><button class="text-btn" data-jump="itinerary">Ver todo →</button></div><div id="nextEvents" class="timeline"></div></article>
+<article class="panel accent-panel"><div class="panel-head"><div><span class="eyebrow">QUICK ACTIONS</span><h2>Ahora</h2></div></div><div class="quick-grid"><button data-jump="map">📍 Compartir ubicación</button><button id="saveCarHome">🚗 Guardar carro</button><button data-jump="airport">✈ Estado del viaje</button><button data-jump="activities">✨ ¿Qué hacemos?</button></div></article></div>
+</section>
+
+<section id="view-itinerary" class="view"><div class="page-title"><div><span class="eyebrow">PLAN</span><h1>Itinerario</h1><p>Todo editable y compartido.</p></div><button class="primary" id="addEventBtn">＋ Añadir</button></div><div class="filter-row" id="dayFilters"></div><div id="itineraryList" class="event-list"></div></section>
+
+<section id="view-map" class="view"><div class="page-title"><div><span class="eyebrow">LIVE FAMILY</span><h1>Mapa & familia</h1><p>Comparte tu ubicación voluntariamente y encuentra el carro.</p></div><button class="primary" id="shareLocationBtn">📍 Compartir mi ubicación</button></div><div class="map-layout"><div id="map"></div><aside class="side-card"><div class="panel-head"><div><span class="eyebrow">CREW</span><h2>Familia</h2></div></div><div id="membersList"></div><hr><h3>Mi carro</h3><p id="carStatus" class="muted">No hay ubicación guardada.</p><button class="ghost full" id="saveCarBtn">Guardar ubicación actual</button><button class="ghost full" id="findCarBtn">Navegar al carro</button></aside></div></section>
+
+<section id="view-places" class="view"><div class="page-title"><div><span class="eyebrow">EXPLORE</span><h1>Lugares</h1><p>Guarda puntos y abre navegación.</p></div><button class="primary" id="addPlaceBtn">＋ Añadir</button></div><div class="search"><span>⌕</span><input id="placeSearch" placeholder="Buscar lugares…"></div><div id="placesGrid" class="cards-grid"></div></section>
+
+<section id="view-packing" class="view"><div class="page-title"><div><span class="eyebrow">READY</span><h1>Equipaje</h1><p>Lista compartida por toda la familia.</p></div><button class="primary" id="addPackBtn">＋ Añadir</button></div><div class="pack-summary"><div><strong id="summaryPct">0%</strong><span>listo</span></div><div class="progress wide"><i id="summaryBar"></i></div><span id="summaryText">0 / 0</span></div><div id="packingList" class="check-list"></div></section>
+
+<section id="view-airport" class="view"><div class="page-title"><div><span class="eyebrow">TRAVEL MODE</span><h1>Estado del viaje</h1><p>Marca cada paso para que la familia lo vea en tiempo real.</p></div></div><div class="status-grid" id="travelStatuses"></div><div class="panel flight-panel"><div class="panel-head"><div><span class="eyebrow">FLIGHT</span><h2>Vuelo</h2></div><button class="ghost" id="editFlightBtn">Editar</button></div><div id="flightInfo">Añade número de vuelo y fecha en Grupo.</div></div></section>
+
+<section id="view-food" class="view"><div class="page-title"><div><span class="eyebrow">TASTE</span><h1>Comida</h1><p>Ideas y restaurantes compartidos.</p></div><button class="primary" id="addFoodBtn">＋ Añadir</button></div><div id="foodGrid" class="cards-grid"></div></section>
+<section id="view-activities" class="view"><div class="page-title"><div><span class="eyebrow">DO MORE</span><h1>Actividades</h1><p>Planes familiares y sugerencias.</p></div><button class="primary" id="addActivityBtn">＋ Añadir</button></div><div id="activityGrid" class="cards-grid"></div></section>
+
+<section id="view-chat" class="view"><div class="page-title"><div><span class="eyebrow">FAMILY SPACE</span><h1>Chat familiar</h1><p>Mensajes sincronizados en tiempo real.</p></div></div><div class="chat-layout"><div class="chat-panel"><div id="messages" class="messages"></div><form id="chatForm" class="chat-form"><input id="chatInput" placeholder="Escribe algo para la familia…" autocomplete="off"><button>↑</button></form></div><aside class="side-card"><span class="eyebrow">CREW</span><h3>Miembros</h3><div id="chatMembers"></div></aside></div></section>
+
+<section id="view-assistant" class="view"><div class="page-title"><div><span class="eyebrow">NOVA · TRAVEL AI</span><h1>Asistente</h1><p>Asistencia basada en los datos reales del viaje.</p></div></div><div class="assistant-box"><div class="ai-header"><div class="ai-orb">✦</div><div><strong>NOVA</strong><span>Travel concierge</span></div></div><div id="aiMessages" class="ai-messages"><div class="ai-bubble">Hola ✨ Puedo ayudarte con equipaje, itinerario y planes familiares.</div></div><div class="suggestions"><button data-q="¿Qué falta en el equipaje?">¿Qué falta?</button><button data-q="¿Qué hacemos después?">¿Qué sigue?</button><button data-q="Dame una idea familiar">Idea familiar</button></div><form id="aiForm" class="chat-form"><input id="aiInput" placeholder="Pregúntame algo…"><button>↑</button></form></div></section>
+
+<section id="view-settings" class="view"><div class="page-title"><div><span class="eyebrow">ADMIN</span><h1>Grupo</h1><p>Personas, permisos y configuración del viaje.</p></div></div><div class="settings-grid"><article class="panel"><div class="panel-head"><div><span class="eyebrow">TRIP</span><h2>Datos del viaje</h2></div><button class="primary" id="saveTripBtn">Guardar</button></div><label>Nombre<input id="tripNameInput"></label><label>Destino<input id="tripDestinationInput"></label><div class="two-inputs"><label>Inicio<input id="tripStartInput" type="date"></label><label>Fin<input id="tripEndInput" type="date"></label></div><label>Vuelo (opcional)<input id="flightNumberInput" placeholder="Ej. AA1234"></label></article>
+<article class="panel"><div class="panel-head"><div><span class="eyebrow">FAMILY</span><h2>Miembros</h2></div><button class="primary" id="addMemberBtn">＋ Invitar</button></div><div id="adminMembers"></div><p class="muted">La eliminación del grupo requiere permisos de administrador.</p></article></div></section>
+</main></div>
+<div id="toast" class="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+if ("serviceWorker" in navigator) window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+</script>
+</body></html>
