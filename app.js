@@ -1,156 +1,3070 @@
-const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const CONFIG=window.APP_CONFIG||{};
-const supa=(CONFIG.SUPABASE_URL&&CONFIG.SUPABASE_ANON_KEY)?supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_ANON_KEY):null;
-const localKey="nuestraAventuraLocal";
-let mode=supa?"cloud":"local", user=null, group=null, selectedDay="Todos", mapObj=null, markers={};
+/* =========================================================
+   NUESTRA AVENTURA · FAMILY HUB
+   APP.JS
+   ========================================================= */
 
-const seed={
- trip:{name:"Nuestra Aventura",destination:"Blowing Rock, NC",start:"2026-10-03",end:"2026-10-07",flight_number:""},
- members:[],
- events:[
-  ["Día 1","08:00","The Pretty Place Chapel","Greenville, SC","TRAVEL"],
-  ["Día 1","11:30","Greenville SC","Paseo familiar","EXPLORE"],
-  ["Día 1","13:30","Banana Soda","Belmont, NC","FOOD"],
-  ["Día 1","16:00","Biscuitville","Lenoir, NC — de camino","FOOD"],
-  ["Día 1","17:30","Arborcrest","Boone, NC","EXPLORE"],
-  ["Día 1","19:00","West Jefferson","Slide, Dollar Tree y Frostys","SHOP"],
-  ["Día 1","20:30","Blowing Rock","Llegada / alojamiento","STAY"],
-  ["Día 1","21:00","The Pedalin Pig","A petición de Daisy","FOOD"],
-  ["Día 2","10:00","Asheville","Exploración familiar","EXPLORE"],
-  ["Día 2","14:00","Black Mountain","Paseo","EXPLORE"],
-  ["Día 2","16:00","Real Gem Mining?","Confirmar disponibilidad","FAMILY"],
-  ["Día 4","10:00","Banner Elk","Winery","EXPLORE"],
-  ["Día 4","13:00","Beech Mountain","Montaña","EXPLORE"],
-  ["Día 4","16:00","St. Bernadette Catholic Church","Linville","MEMORY"],
-  ["Día 5","09:00","Bossy Beulah","Winston-Salem","FOOD"],
-  ["Día 5","12:00","Buc-ee’s","Parada","TRAVEL"],
-  ["Día 5","15:00","Quick Bite","Parada de comida","FOOD"],
-  ["Día 5","16:30","Zaxby’s","NO HAY EN MD — confirmar antes","FOOD"]
- ],
- packing:["Documentos / IDs","Cargadores","Ropa familiar","Artículos del bebé","Snacks","Medicinas / esenciales","Carriola","Bolsa de día"],
- places:["The Pretty Place Chapel","Greenville SC","Banana Soda","Biscuitville","Arborcrest","West Jefferson","Blowing Rock","The Pedalin Pig","Asheville","Black Mountain","Real Gem Mining","Banner Elk","Beech Mountain","St. Bernadette Catholic Church","Bossy Beulah","Buc-ee’s"],
- food:["Biscuitville","Banana Soda","The Pedalin Pig","Bossy Beulah","Quick Bite","Zaxby’s"],
- activities:["Asheville","Black Mountain","Real Gem Mining","Beech Mountain","West Jefferson"],
- messages:[],
- statuses:{tsa:false,boarding:false,landed:false,bags:false,car:false}
-};
+(() => {
+  "use strict";
 
-function loadLocal(){try{return JSON.parse(localStorage.getItem(localKey))||structuredClone(seed)}catch{return structuredClone(seed)}}
-let local=loadLocal();
-function saveLocal(){localStorage.setItem(localKey,JSON.stringify(local))}
-function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2400)}
-function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
-function initials(n){return (n||"?").split(/\s+/).map(x=>x[0]).join("").slice(0,2).toUpperCase()}
-function openMap(lat,lon,label="Destino"){window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&destination_place_id=&travelmode=driving`,"_blank")}
-function navSearch(q){window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`,"_blank")}
+  const STORAGE_CONFIG = "nuestra_aventura_supabase_config";
+  const STORAGE_OFFLINE = "nuestra_aventura_offline_data";
+  const STORAGE_GROUP = "nuestra_aventura_current_group";
 
-async function boot(){
- if(!supa){$("#authView").classList.add("hidden");$("#app").classList.remove("hidden");initLocal();return}
- const {data}=await supa.auth.getSession(); if(data.session){user=data.session.user;await cloudInit()} else showAuth();
- supa.auth.onAuthStateChange(async(_e,s)=>{if(s){user=s.user;await cloudInit()}else showAuth()});
-}
-function showAuth(){$("#authView").classList.remove("hidden");$("#app").classList.add("hidden")}
-async function cloudInit(){
- $("#authView").classList.add("hidden");$("#app").classList.remove("hidden");
- let {data:p}=await supa.from("profiles").select("*").eq("id",user.id).maybeSingle();
- if(!p){await supa.from("profiles").insert({id:user.id,email:user.email,name:user.user_metadata?.name||user.email.split("@")[0]});}
- let {data:m}=await supa.from("members").select("*,groups(*)").eq("user_id",user.id).maybeSingle();
- if(m){group=m.groups;mode="cloud";await loadCloud();} else {mode="cloud";group=null;renderAll();}
-}
-async function loadCloud(){
- const g=group.id;
- const [ev,pk,pl,fo,ac,msg,loc,sts]=await Promise.all([
-  supa.from("events").select("*").eq("group_id",g).order("date").order("time"),
-  supa.from("packing").select("*").eq("group_id",g).order("created_at"),
-  supa.from("places").select("*").eq("group_id",g).order("created_at"),
-  supa.from("food").select("*").eq("group_id",g).order("created_at"),
-  supa.from("activities").select("*").eq("group_id",g).order("created_at"),
-  supa.from("messages").select("*").eq("group_id",g).order("created_at"),
-  supa.from("locations").select("*").eq("group_id",g),
-  supa.from("travel_status").select("*").eq("group_id",g).maybeSingle()
- ]);
- local.trip={name:group.name,destination:group.destination,start:group.start_date,end:group.end_date,flight_number:group.flight_number||""};
- local.events=ev.data||[];local.packing=pk.data||[];local.places=pl.data||[];local.food=fo.data||[];local.activities=ac.data||[];local.messages=msg.data||[];local.locations=loc.data||[];local.statuses=sts.data||{};
- const mem=await supa.from("members").select("*,profiles(name,email)").eq("group_id",g);
- local.members=mem.data||[];renderAll();subscribeRealtime();
-}
-function subscribeRealtime(){
- if(!supa||!group)return;
- supa.channel("trip-"+group.id).on("postgres_changes",{event:"*",schema:"public",table:"events",filter:`group_id=eq.${group.id}`},()=>loadCloud())
- .on("postgres_changes",{event:"*",schema:"public",table:"packing",filter:`group_id=eq.${group.id}`},()=>loadCloud())
- .on("postgres_changes",{event:"*",schema:"public",table:"messages",filter:`group_id=eq.${group.id}`},()=>loadCloud())
- .on("postgres_changes",{event:"*",schema:"public",table:"locations",filter:`group_id=eq.${group.id}`},()=>loadCloud()).subscribe();
-}
-async function write(table,payload,id){
- if(mode==="local"){return}
- let q=id?supa.from(table).update(payload).eq("id",id):supa.from(table).insert(payload);
- const {error}=await q;if(error)toast(error.message);return !error
-}
-async function createGroup(){
- const name=prompt("Nombre del grupo","Nuestra Aventura");if(!name)return;
- const code=Math.random().toString(36).slice(2,8).toUpperCase();
- const {data:g,error}=await supa.from("groups").insert({name,destination:"Blowing Rock, NC",start_date:"2026-10-03",end_date:"2026-10-07",invite_code:code,owner_id:user.id}).select().single();
- if(error){toast(error.message);return}
- await supa.from("members").insert({group_id:g.id,user_id:user.id,role:"owner"});
- group=g;await loadCloud();toast("Grupo creado. Código: "+code)
-}
-async function joinGroup(){
- const code=prompt("Código de invitación");if(!code)return;
- const {data:g,error}=await supa.from("groups").select("*").eq("invite_code",code.trim().toUpperCase()).single();
- if(error){toast("Código no encontrado");return}
- await supa.from("members").insert({group_id:g.id,user_id:user.id,role:"adult"});group=g;await loadCloud()
-}
-async function createIfNoGroup(){if(!group){if(confirm("¿Crear un grupo nuevo?"))await createGroup();else if(confirm("¿Tienes un código de invitación?"))await joinGroup();}}
-async function initLocal(){local=loadLocal();local.members=[{id:"mimi",name:"Mimi",role:"owner"},{id:"partner",name:"Partner",role:"adult"},{id:"adley",name:"Adley",role:"kid"},{id:"oliver",name:"Oliver",role:"kid"}];renderAll();loadWeather()}
+  let supabaseClient = null;
+  let onlineMode = false;
+  let currentUser = null;
+  let currentGroup = null;
+  let currentView = "home";
 
-function showView(name){$$(".view").forEach(v=>v.classList.remove("active-view"));$("#view-"+name)?.classList.add("active-view");$$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("#pageName").textContent=({home:"Inicio",itinerary:"Itinerario",map:"Mapa & familia",places:"Lugares",packing:"Equipaje",airport:"Viaje / aeropuerto",food:"Comida",activities:"Actividades",chat:"Familia",assistant:"NOVA",settings:"Grupo"})[name]||name;if(name==="map")setTimeout(initMap,50);if(innerWidth<761)$("#sidebar").classList.remove("open")}
-function renderHome(){
- const t=local.trip,today=new Date();today.setHours(0,0,0,0);const start=new Date((t.start||"2026-10-03")+"T00:00:00");const days=Math.max(0,Math.ceil((start-today)/86400000));$("#daysLeft").textContent=days;$("#tripDates").textContent=`${fmt(t.start)} — ${fmt(t.end)}`;$("#destination").textContent=t.destination;$("#tripTitle").textContent=t.name;
- const p=local.packing||[],done=p.filter(x=>x.done===true||x[1]===true).length;$("#packPct").textContent=(p.length?Math.round(done/p.length*100):0)+"%";$("#packSub").textContent=`${done} de ${p.length}`;$("#tripProgress").style.width=Math.min(100,Math.max(4,100-days))+"%";
- $("#familyCount").textContent=`${(local.members||[]).length} personas en el grupo`;$("#familyAvatars").innerHTML=(local.members||[]).slice(0,5).map(m=>`<span>${initials(m.profiles?.name||m.name)}</span>`).join("");
- $("#nextEvents").innerHTML=(local.events||[]).slice(0,4).map(e=>`<div class="timeline-item"><time>${esc(e.time||"—")}</time><i class="timeline-dot"></i><div><strong>${esc(e.title)}</strong><small>${esc(e.description||e.desc||"")}</small></div></div>`).join("")||"<p class='muted'>No hay eventos.</p>";
-}
-function fmt(x){return x?new Date(x+"T12:00:00").toLocaleDateString("es-PR",{day:"numeric",month:"short"}):"—"}
-function renderItinerary(){
- const days=["Todos",...new Set((local.events||[]).map(e=>e.day||"Día"))];$("#dayFilters").innerHTML=days.map(d=>`<button class="filter ${d===selectedDay?"active":""}" data-day="${esc(d)}">${esc(d)}</button>`).join("");
- $$(".filter").forEach(b=>b.onclick=()=>{selectedDay=b.dataset.day;renderItinerary()});
- const arr=selectedDay==="Todos"?local.events:local.events.filter(e=>(e.day||"Día")===selectedDay);
- $("#itineraryList").innerHTML=arr.map(e=>`<article class="event-card"><time>${esc(e.day||"")}<br><strong>${esc(e.time||"")}</strong></time><div><h3>${esc(e.title)}</h3><p>${esc(e.description||e.desc||"")}</p></div><span class="tag">${esc(e.tag||"CUSTOM")}</span><button class="delete-btn" data-del-event="${e.id||""}">×</button></article>`).join("");
- $$("[data-del-event]").forEach(b=>b.onclick=()=>deleteEvent(b.dataset.delEvent))
-}
-async function deleteEvent(id){if(!confirm("Eliminar este evento?"))return;if(mode==="local"){local.events=local.events.filter(e=>String(e.id)!==id);saveLocal();renderAll();return}await supa.from("events").delete().eq("id",id);await loadCloud()}
-function renderPacking(){const p=local.packing||[],done=p.filter(x=>x.done===true||x[1]===true).length,pct=p.length?Math.round(done/p.length*100):0;$("#summaryPct").textContent=pct+"%";$("#summaryBar").style.width=pct+"%";$("#summaryText").textContent=`${done} / ${p.length}`;$("#packingList").innerHTML=p.map(x=>`<label class="check ${x.done?"done":x[1]?"done":""}"><input type="checkbox" ${x.done||x[1]?"checked":""} data-pack="${x.id||""}"><span>${esc(x.name||x[0])}</span><button class="delete-btn" data-del-pack="${x.id||""}">×</button></label>`).join("");$$("[data-pack]").forEach(c=>c.onchange=async()=>{const x=p.find(z=>String(z.id)===c.dataset.pack);if(mode==="local"){const i=p.indexOf(x);if(x)x.done=c.checked;else p[i][1]=c.checked;saveLocal();renderPacking()}else{await write("packing",{done:c.checked},c.dataset.pack)}});$$("[data-del-pack]").forEach(b=>b.onclick=async()=>{if(mode==="local"){local.packing=p.filter(x=>String(x.id)!==b.dataset.delPack);saveLocal();renderPacking()}else await supa.from("packing").delete().eq("id",b.dataset.delPack)})}
-function card(x,type){const id=x.id||"";return `<article class="info-card"><div class="symbol">${type==="food"?"♡":type==="activity"?"✧":"⌖"}</div><h3>${esc(x.name||x[1])}</h3><p>${esc(x.description||x[2]||"")}</p><span class="chip">${esc(x.category||x[3]||"FAMILY")}</span>${type==="place"?`<button class="text-btn nav-place" data-place="${esc(x.name||x[1])}">Navegar →</button>`:""}<button class="delete-btn" data-delete="${type}" data-id="${id}">×</button></article>`}
-function renderCollections(){const q=($("#placeSearch")?.value||"").toLowerCase();$("#placesGrid").innerHTML=(local.places||[]).filter(x=>(x.name||x[1]).toLowerCase().includes(q)).map(x=>card(x,"place")).join("");$("#foodGrid").innerHTML=(local.food||[]).map(x=>card(x,"food")).join("");$("#activityGrid").innerHTML=(local.activities||[]).map(x=>card(x,"activity")).join("");$$(".nav-place").forEach(b=>b.onclick=()=>navSearch(b.dataset.place));$$("[data-delete]").forEach(b=>b.onclick=()=>deleteCollection(b.dataset.delete,b.dataset.id))}
-async function deleteCollection(type,id){if(!confirm("Eliminar este elemento?"))return;const table={place:"places",food:"food",activity:"activities"}[type];if(mode==="local"){local[{place:"places",food:"food",activity:"activities"}[type]]=local[{place:"places",food:"food",activity:"activities"}[type]].filter(x=>String(x.id)!==id);saveLocal();renderCollections()}else await supa.from(table).delete().eq("id",id)}
-function renderChat(){$("#messages").innerHTML=(local.messages||[]).map(m=>`<div class="message ${m.user_id===user?.id||m.me?"me":""}"><strong>${esc(m.profiles?.name||m.name||"Familia")}</strong><br>${esc(m.body||m[1])}<small>${m.created_at?new Date(m.created_at).toLocaleString("es-PR"):"Ahora"}</small></div>`).join("");$("#messages").scrollTop=$("#messages").scrollHeight;$("#chatMembers").innerHTML=(local.members||[]).map(m=>memberHtml(m,false)).join("")}
-function memberHtml(m,admin){const name=m.profiles?.name||m.name||m.profiles?.email||"Miembro";return `<div class="member"><span>${initials(name)}</span><div><strong>${esc(name)}</strong><small>${esc(m.role||"adult")}</small></div><i class="online-dot">●</i>${admin&&m.user_id!==user?.id?`<button class="delete-btn remove-member" data-id="${m.user_id}">×</button>`:""}</div>`}
-async function renderMembers(){const ms=local.members||[];$("#membersList").innerHTML=ms.map(m=>{const name=m.profiles?.name||m.name||"Miembro";const loc=(local.locations||[]).find(l=>l.user_id===m.user_id);return `<div class="member"><span>${initials(name)}</span><div><strong>${esc(name)}</strong><small>${esc(m.role||"adult")} · ${loc?new Date(loc.updated_at).toLocaleTimeString("es-PR",{hour:"2-digit",minute:"2-digit"}):"sin ubicación"}</small></div><button class="text-btn" data-focus="${m.user_id}">Ver</button></div>`}).join("");$("#adminMembers").innerHTML=ms.map(m=>memberHtml(m,true)).join("");$$(".remove-member").forEach(b=>b.onclick=()=>removeMember(b.dataset.id))}
-async function removeMember(id){if(!confirm("¿Eliminar esta persona del grupo?"))return;await supa.from("members").delete().eq("user_id",id).eq("group_id",group.id);await loadCloud()}
-function renderStatuses(){$("#travelStatuses").innerHTML=[["tsa","TSA pasado","Seguridad completada"],["boarding","Abordando","Estamos en la puerta"],["landed","Aterrizamos","Ya llegamos"],["bags","Equipaje recogido","Maletas listas"]].map(([k,t,d])=>`<button class="status-card ${local.statuses?.[k]?"done":""}" data-status="${k}"><span>${local.statuses?.[k]?"✓":"○"}</span><div><strong>${t}</strong><small>${d}</small></div></button>`).join("");$$("[data-status]").forEach(b=>b.onclick=async()=>{const k=b.dataset.status;local.statuses[k]=!local.statuses[k];if(mode==="cloud")await supa.from("travel_status").upsert({group_id:group.id,...local.statuses});else saveLocal();renderStatuses()});$("#flightInfo").textContent=local.trip.flight_number?`Vuelo ${local.trip.flight_number} · La app puede mostrar enlaces de seguimiento del proveedor que conectes.`:"No hay número de vuelo configurado."}
-function renderSettings(){const t=local.trip;$("#tripNameInput").value=t.name||"";$("#tripDestinationInput").value=t.destination||"";$("#tripStartInput").value=t.start||"";$("#tripEndInput").value=t.end||"";$("#flightNumberInput").value=t.flight_number||""}
-function renderAll(){renderHome();renderItinerary();renderCollections();renderPacking();renderChat();renderStatuses();renderMembers();renderSettings();loadWeather()}
-async function loadWeather(){try{const q=encodeURIComponent(local.trip.destination||"Blowing Rock, NC");const g=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${q}&count=1&language=en&format=json`).then(r=>r.json());const r=g.results?.[0];if(!r)return;const w=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${r.latitude}&longitude=${r.longitude}&current=temperature_2m,weather_code,wind_speed_10m&temperature_unit=fahrenheit`).then(r=>r.json());$("#weatherTemp").textContent=Math.round(w.current.temperature_2m)+"°F";$("#weatherDesc").textContent="Ahora";$("#weatherMeta").textContent=`Viento ${Math.round(w.current.wind_speed_10m)} mph`;}catch{$("#weatherMeta").textContent="Sin conexión"}}
-function initMap(){if(mapObj)return;mapObj=L.map("map").setView([36.135,-81.677],10);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap contributors"}).addTo(mapObj);renderMapMarkers()}
-function renderMapMarkers(){if(!mapObj)return;(local.locations||[]).forEach(l=>{if(markers[l.user_id])markers[l.user_id].remove();markers[l.user_id]=L.marker([l.lat,l.lon]).addTo(mapObj).bindPopup(esc(l.name||"Familia"));});const car=local.car;if(car){if(markers.car)markers.car.remove();markers.car=L.marker([car.lat,car.lon]).addTo(mapObj).bindPopup("🚗 Mi carro")}}
-async function shareLocation(){if(!navigator.geolocation){toast("Este navegador no permite ubicación.");return}navigator.geolocation.getCurrentPosition(async pos=>{const payload={group_id:group?.id,user_id:user?.id,lat:pos.coords.latitude,lon:pos.coords.longitude,name:user?.user_metadata?.name||user?.email||"Yo",updated_at:new Date().toISOString()};if(mode==="cloud"){await supa.from("locations").upsert(payload,{onConflict:"group_id,user_id"})}else{local.locations=local.locations||[];local.locations=local.locations.filter(x=>x.user_id!=="local");local.locations.push({...payload,user_id:"local"});saveLocal()}renderMapMarkers();toast("Ubicación compartida ✦")},()=>toast("No se pudo obtener la ubicación."),{enableHighAccuracy:true,maximumAge:15000,timeout:15000})}
-async function saveCar(){navigator.geolocation?.getCurrentPosition(async p=>{const car={lat:p.coords.latitude,lon:p.coords.longitude,updated_at:new Date().toISOString()};if(mode==="cloud")await supa.from("parking").upsert({group_id:group.id,user_id:user.id,...car});local.car=car;saveLocal();renderMapMarkers();$("#carStatus").textContent="Guardado "+new Date().toLocaleTimeString("es-PR");toast("Carro guardado 🚗")},()=>toast("Permite ubicación para guardar el carro."))}
-async function findCar(){if(!local.car){toast("Primero guarda el carro.");return}openMap(local.car.lat,local.car.lon,"Mi carro")}
-function addEvent(){const title=prompt("Nombre del evento");if(!title)return;const day=prompt("Día","Día 1")||"Día 1",time=prompt("Hora","10:00")||"10:00",desc=prompt("Descripción","Añadido por la familia.")||"";if(mode==="local"){local.events.push({id:crypto.randomUUID(),day,time,title,description:desc,tag:"CUSTOM"});saveLocal();renderAll()}else write("events",{group_id:group.id,day,time,title,description:desc,tag:"CUSTOM",date:local.trip.start}).then(loadCloud)}
-function addPack(){const n=prompt("¿Qué quieres añadir al equipaje?");if(!n)return;if(mode==="local"){local.packing.push({id:crypto.randomUUID(),name:n,done:false});saveLocal();renderPacking()}else write("packing",{group_id:group.id,name:n,done:false}).then(loadCloud)}
-function addPlace(){const n=prompt("Nombre del lugar");if(!n)return;const d=prompt("Descripción","Lugar para la familia")||"";if(mode==="local"){local.places.push({id:crypto.randomUUID(),name:n,description:d,category:"FAMILY"});saveLocal();renderCollections()}else write("places",{group_id:group.id,name:n,description:d,category:"FAMILY"}).then(loadCloud)}
-function addFood(){const n=prompt("Restaurante/comida");if(!n)return;if(mode==="local"){local.food.push({id:crypto.randomUUID(),name:n,description:"Añadido por la familia",category:"FOOD"});saveLocal();renderCollections()}else write("food",{group_id:group.id,name:n,description:"Añadido por la familia",category:"FOOD"}).then(loadCloud)}
-function addActivity(){const n=prompt("Actividad");if(!n)return;if(mode==="local"){local.activities.push({id:crypto.randomUUID(),name:n,description:"Añadida por la familia",category:"FAMILY"});saveLocal();renderCollections()}else write("activities",{group_id:group.id,name:n,description:"Añadida por la familia",category:"FAMILY"}).then(loadCloud)}
-function askAI(q){q=q.trim();if(!q)return;$("#aiMessages").insertAdjacentHTML("beforeend",`<div class="ai-bubble user">${esc(q)}</div>`);let a="Puedo ayudarte a organizar este viaje con los datos guardados.";const l=q.toLowerCase();if(l.includes("equip")||l.includes("falta")){const left=local.packing.filter(x=>!(x.done||x[1])).map(x=>x.name||x[0]);a=left.length?`Faltan: <b>${esc(left.join(", "))}</b>.`:"¡El equipaje está completo! ✨"}else if(l.includes("sigue")||l.includes("después")||l.includes("itiner")){const e=local.events[0];a=e?`Lo próximo guardado es <b>${esc(e.title)}</b> a las ${esc(e.time||"—")}.`:"No hay eventos guardados."}else if(l.includes("idea")||l.includes("actividad"))a="Pueden elegir una actividad de la sección Actividades y abrir navegación desde Lugares.";setTimeout(()=>$("#aiMessages").insertAdjacentHTML("beforeend",`<div class="ai-bubble">${a}</div>`),200)}
-$$(".nav-item").forEach(b=>b.onclick=()=>showView(b.dataset.view));$$("[data-jump]").forEach(b=>b.onclick=()=>showView(b.dataset.jump));$("#menuBtn").onclick=()=>$("#sidebar").classList.toggle("open");$("#themeBtn").onclick=()=>{document.body.classList.toggle("light");localStorage.setItem("theme",document.body.classList.contains("light")?"light":"dark")};if(localStorage.getItem("theme")==="light")document.body.classList.add("light");
-$("#addEventBtn").onclick=addEvent;$("#addPackBtn").onclick=addPack;$("#addPlaceBtn").onclick=addPlace;$("#addFoodBtn").onclick=addFood;$("#addActivityBtn").onclick=addActivity;$("#placeSearch").oninput=renderCollections;$("#shareLocationBtn").onclick=shareLocation;$("#saveCarBtn").onclick=saveCar;$("#saveCarHome").onclick=saveCar;$("#findCarBtn").onclick=findCar;$("#chatForm").onsubmit=async e=>{e.preventDefault();const body=$("#chatInput").value.trim();if(!body)return;if(mode==="local"){local.messages.push({name:"Yo",body,me:true,created_at:new Date().toISOString()});saveLocal();renderChat()}else{await supa.from("messages").insert({group_id:group.id,user_id:user.id,body});await loadCloud()}$("#chatInput").value=""};$("#aiForm").onsubmit=e=>{e.preventDefault();askAI($("#aiInput").value);$("#aiInput").value=""};$$(".suggestions button").forEach(b=>b.onclick=()=>askAI(b.dataset.q));
-$("#saveTripBtn").onclick=async()=>{const t={name:$("#tripNameInput").value.trim(),destination:$("#tripDestinationInput").value.trim(),start:$("#tripStartInput").value,end:$("#tripEndInput").value,flight_number:$("#flightNumberInput").value.trim()};if(mode==="local"){local.trip=t;saveLocal();renderAll()}else{await supa.from("groups").update({name:t.name,destination:t.destination,start_date:t.start,end_date:t.end,flight_number:t.flight_number}).eq("id",group.id);group={...group,...{name:t.name,destination:t.destination,start_date:t.start,end_date:t.end,flight_number:t.flight_number}};local.trip=t;renderAll()}toast("Viaje actualizado ✦")};
-$("#addMemberBtn").onclick=async()=>{if(mode!=="cloud"){toast("Crea/conecta un grupo para invitar personas.");return}alert(`Código de invitación: ${group.invite_code}\n\nComparte este código con la persona para que entre al grupo.`)};
-$("#notifyBtn").onclick=()=>toast("Las notificaciones del sistema se conectan mediante el proveedor que configures.");
-$("#editFlightBtn").onclick=()=>showView("settings");
-$("#signOutBtn").onclick=async()=>{if(supa)await supa.auth.signOut();else{location.reload()}};
-$("#demoLocalBtn").onclick=()=>{mode="local";$("#authView").classList.add("hidden");$("#app").classList.remove("hidden");initLocal()};
-$$(".tab").forEach(t=>t.onclick=()=>{$$(".tab").forEach(x=>x.classList.remove("active"));t.classList.add("active");$("#authSubmit").textContent=t.dataset.auth==="signup"?"Crear cuenta":"Entrar";$("#authForm").dataset.mode=t.dataset.auth});
-$("#authForm").onsubmit=async e=>{e.preventDefault();if(!supa)return;const email=$("#authEmail").value.trim(),password=$("#authPassword").value;const fn=$("#authForm").dataset.mode||"login";const r=fn==="signup"?await supa.auth.signUp({email,password}):await supa.auth.signInWithPassword({email,password});if(r.error)$("#authMsg").textContent=r.error.message;else if(fn==="signup")$("#authMsg").textContent="Cuenta creada. Revisa tu email si la confirmación está activada."};
-window.addEventListener("online",()=>{ $("#offline").classList.add("hidden"); if(mode==="cloud")loadCloud()});window.addEventListener("offline",()=>$("#offline").classList.remove("hidden"));
-if("geolocation" in navigator){} boot();
+  let data = {
+    events: [],
+    packing: [],
+    places: [],
+    food: [],
+    activities: [],
+    messages: [],
+    members: [],
+    profiles: [],
+    locations: [],
+    parking: null,
+    travel_status: null
+  };
+
+  let realtimeChannel = null;
+
+  const $ = (id) => document.getElementById(id);
+
+  /* =======================================================
+     INIT
+     ======================================================= */
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  async function init() {
+
+    bindEvents();
+
+    const savedConfig = localStorage.getItem(STORAGE_CONFIG);
+
+    if (
+      savedConfig &&
+      window.APP_CONFIG &&
+      !window.APP_CONFIG.SUPABASE_URL
+    ) {
+      try {
+        const parsed = JSON.parse(savedConfig);
+
+        window.APP_CONFIG.SUPABASE_URL = parsed.url;
+        window.APP_CONFIG.SUPABASE_KEY = parsed.key;
+      } catch (_) {}
+    }
+
+    if (
+      window.APP_CONFIG?.SUPABASE_URL &&
+      window.APP_CONFIG?.SUPABASE_KEY
+    ) {
+      const connected = await initializeSupabase(
+        window.APP_CONFIG.SUPABASE_URL,
+        window.APP_CONFIG.SUPABASE_KEY
+      );
+
+      if (connected) {
+        await checkExistingSession();
+        return;
+      }
+    }
+
+    showAuthOrConfig();
+  }
+
+  /* =======================================================
+     SUPABASE
+     ======================================================= */
+
+  async function initializeSupabase(url, key) {
+
+    url = String(url || "").trim();
+    key = String(key || "").trim();
+
+    if (!/^https?:\/\/.+/i.test(url)) {
+      return false;
+    }
+
+    if (!key) {
+      return false;
+    }
+
+    try {
+
+      supabaseClient = window.supabase.createClient(url, key, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true
+        }
+      });
+
+      onlineMode = true;
+
+      updateConnectionUI();
+
+      return true;
+
+    } catch (error) {
+
+      console.error(error);
+
+      supabaseClient = null;
+      onlineMode = false;
+
+      return false;
+    }
+  }
+
+  async function checkExistingSession() {
+
+    try {
+
+      const {
+        data: sessionData
+      } = await supabaseClient.auth.getSession();
+
+      if (sessionData?.session?.user) {
+
+        currentUser = sessionData.session.user;
+
+        await ensureProfile();
+
+        await loadGroups();
+
+        showApp();
+
+      } else {
+
+        showAuth();
+
+      }
+
+    } catch (error) {
+
+      console.error(error);
+
+      showAuth();
+    }
+
+    supabaseClient?.auth.onAuthStateChange(
+      async (_event, session) => {
+
+        if (session?.user) {
+
+          currentUser = session.user;
+
+          await ensureProfile();
+          await loadGroups();
+
+          showApp();
+
+        } else {
+
+          currentUser = null;
+        }
+      }
+    );
+  }
+
+  async function ensureProfile() {
+
+    if (!onlineMode || !currentUser) return;
+
+    const name =
+      currentUser.user_metadata?.name ||
+      currentUser.user_metadata?.full_name ||
+      currentUser.email?.split("@")[0] ||
+      "Usuario";
+
+    const { error } = await supabaseClient
+      .from("profiles")
+      .upsert(
+        {
+          id: currentUser.id,
+          email: currentUser.email || "",
+          name
+        },
+        {
+          onConflict: "id"
+        }
+      );
+
+    if (error) {
+      console.warn("Profile:", error.message);
+    }
+  }
+
+  /* =======================================================
+     CONFIGURATION
+     ======================================================= */
+
+  function showAuthOrConfig() {
+
+    hide("loadingScreen");
+
+    const configExists =
+      window.APP_CONFIG?.SUPABASE_URL &&
+      window.APP_CONFIG?.SUPABASE_KEY;
+
+    if (configExists) {
+
+      showAuth();
+
+    } else {
+
+      showConfig();
+    }
+  }
+
+  function showConfig() {
+
+    hide("loadingScreen");
+    hide("authScreen");
+    hide("app");
+
+    show("configScreen");
+
+    $("setupUrl").value =
+      window.APP_CONFIG?.SUPABASE_URL || "";
+
+    $("setupKey").value =
+      window.APP_CONFIG?.SUPABASE_KEY || "";
+  }
+
+  async function saveConfiguration() {
+
+    const url = $("setupUrl").value.trim();
+    const key = $("setupKey").value.trim();
+
+    $("configError").textContent = "";
+
+    if (!/^https?:\/\/.+/i.test(url)) {
+
+      $("configError").textContent =
+        "La Project URL debe comenzar con https://";
+
+      return;
+    }
+
+    if (!key) {
+
+      $("configError").textContent =
+        "Pega la Publishable/Anon Key.";
+
+      return;
+    }
+
+    const connected =
+      await initializeSupabase(url, key);
+
+    if (!connected) {
+
+      $("configError").textContent =
+        "No pude inicializar Supabase. Verifica la URL y la key.";
+
+      return;
+    }
+
+    localStorage.setItem(
+      STORAGE_CONFIG,
+      JSON.stringify({
+        url,
+        key
+      })
+    );
+
+    window.APP_CONFIG.SUPABASE_URL = url;
+    window.APP_CONFIG.SUPABASE_KEY = key;
+
+    toast("Supabase conectado.");
+
+    showAuth();
+  }
+
+  /* =======================================================
+     AUTH
+     ======================================================= */
+
+  function showAuth() {
+
+    hide("loadingScreen");
+    hide("configScreen");
+    hide("app");
+
+    show("authScreen");
+
+    setAuthTab("login");
+
+    $("authMessage").textContent = "";
+  }
+
+  function setAuthTab(type) {
+
+    const login = type === "login";
+
+    $("loginTab").classList.toggle("active", login);
+    $("signupTab").classList.toggle("active", !login);
+
+    $("loginForm").classList.toggle("hidden", !login);
+    $("signupForm").classList.toggle("hidden", login);
+
+    $("authMessage").textContent = "";
+  }
+
+  async function login(event) {
+
+    event.preventDefault();
+
+    if (!supabaseClient) {
+
+      $("authMessage").textContent =
+        "Configura Supabase primero.";
+
+      return;
+    }
+
+    const email =
+      $("loginEmail").value.trim();
+
+    const password =
+      $("loginPassword").value;
+
+    setBusy(event.target, true);
+
+    const { data: result, error } =
+      await supabaseClient.auth.signInWithPassword({
+        email,
+        password
+      });
+
+    setBusy(event.target, false);
+
+    if (error) {
+
+      $("authMessage").textContent =
+        translateError(error.message);
+
+      return;
+    }
+
+    currentUser = result.user;
+
+    await ensureProfile();
+    await loadGroups();
+
+    showApp();
+  }
+
+  async function signup(event) {
+
+    event.preventDefault();
+
+    if (!supabaseClient) {
+
+      $("authMessage").textContent =
+        "Configura Supabase primero.";
+
+      return;
+    }
+
+    const name =
+      $("signupName").value.trim();
+
+    const email =
+      $("signupEmail").value.trim();
+
+    const password =
+      $("signupPassword").value;
+
+    const password2 =
+      $("signupPassword2").value;
+
+    if (password !== password2) {
+
+      $("authMessage").textContent =
+        "Las contraseñas no coinciden.";
+
+      return;
+    }
+
+    setBusy(event.target, true);
+
+    const {
+      data: result,
+      error
+    } = await supabaseClient.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name
+        },
+        emailRedirectTo:
+          window.APP_CONFIG.SITE_URL
+      }
+    });
+
+    setBusy(event.target, false);
+
+    if (error) {
+
+      $("authMessage").textContent =
+        translateError(error.message);
+
+      return;
+    }
+
+    if (result.session) {
+
+      currentUser = result.user;
+
+      await ensureProfile();
+      await loadGroups();
+
+      showApp();
+
+    } else {
+
+      $("authMessage").textContent =
+        "Cuenta creada. Revisa tu email para confirmar la cuenta y luego entra.";
+    }
+  }
+
+  async function forgotPassword() {
+
+    if (!supabaseClient) return;
+
+    const email =
+      $("loginEmail").value.trim();
+
+    if (!email) {
+
+      $("authMessage").textContent =
+        "Escribe tu email primero.";
+
+      return;
+    }
+
+    const { error } =
+      await supabaseClient.auth.resetPasswordForEmail(
+        email,
+        {
+          redirectTo:
+            window.APP_CONFIG.SITE_URL
+        }
+      );
+
+    $("authMessage").textContent =
+      error
+        ? translateError(error.message)
+        : "Te envié instrucciones para cambiar tu contraseña.";
+  }
+
+  async function logout() {
+
+    if (onlineMode && supabaseClient) {
+
+      await supabaseClient.auth.signOut();
+    }
+
+    currentUser = null;
+    currentGroup = null;
+
+    localStorage.removeItem(STORAGE_GROUP);
+
+    showAuth();
+  }
+
+  /* =======================================================
+     OFFLINE
+     ======================================================= */
+
+  function enterOffline() {
+
+    onlineMode = false;
+    supabaseClient = null;
+    currentUser = {
+      id: "offline-user",
+      email: "offline@local",
+      user_metadata: {
+        name: "Modo Offline"
+      }
+    };
+
+    loadOfflineData();
+
+    showApp();
+  }
+
+  function loadOfflineData() {
+
+    try {
+
+      const saved =
+        JSON.parse(
+          localStorage.getItem(STORAGE_OFFLINE) || "{}"
+        );
+
+      data = {
+        events: saved.events || [],
+        packing: saved.packing || [],
+        places: saved.places || [],
+        food: saved.food || [],
+        activities: saved.activities || [],
+        messages: saved.messages || [],
+        members: saved.members || [],
+        profiles: saved.profiles || [],
+        locations: saved.locations || [],
+        parking: saved.parking || null,
+        travel_status: saved.travel_status || null
+      };
+
+      currentGroup =
+        saved.group || null;
+
+    } catch (_) {
+
+      data = {
+        events: [],
+        packing: [],
+        places: [],
+        food: [],
+        activities: [],
+        messages: [],
+        members: [],
+        profiles: [],
+        locations: [],
+        parking: null,
+        travel_status: null
+      };
+    }
+  }
+
+  function saveOfflineData() {
+
+    if (onlineMode) return;
+
+    localStorage.setItem(
+      STORAGE_OFFLINE,
+      JSON.stringify({
+        ...data,
+        group: currentGroup
+      })
+    );
+  }
+
+  /* =======================================================
+     APP
+     ======================================================= */
+
+  function showApp() {
+
+    hide("loadingScreen");
+    hide("configScreen");
+    hide("authScreen");
+
+    show("app");
+
+    updateUserUI();
+    updateConnectionUI();
+
+    navigate("home");
+
+    renderAll();
+  }
+
+  function updateUserUI() {
+
+    const name =
+      currentUser?.user_metadata?.name ||
+      currentUser?.user_metadata?.full_name ||
+      currentUser?.email?.split("@")[0] ||
+      "Invitada";
+
+    $("userNameDisplay").textContent = name;
+
+    $("settingsUserName").textContent = name;
+
+    $("settingsUserEmail").textContent =
+      currentUser?.email || "Modo offline";
+
+    $("userPill").querySelector(".avatar").textContent =
+      name.charAt(0).toUpperCase();
+  }
+
+  function updateConnectionUI() {
+
+    const badge = $("connectionBadge");
+
+    if (!badge) return;
+
+    const online =
+      onlineMode &&
+      navigator.onLine;
+
+    badge.classList.toggle(
+      "online",
+      online
+    );
+
+    badge.querySelector("span:last-child").textContent =
+      online
+        ? "Conectado"
+        : "Offline";
+
+    if ($("settingsConnection")) {
+
+      $("settingsConnection").textContent =
+        online
+          ? "Conectado a Supabase"
+          : "Modo offline";
+    }
+  }
+
+  /* =======================================================
+     NAVIGATION
+     ======================================================= */
+
+  function navigate(view) {
+
+    currentView = view;
+
+    document
+      .querySelectorAll(".view")
+      .forEach(el => {
+        el.classList.remove("active");
+      });
+
+    const target =
+      $("view-" + view);
+
+    if (target) {
+      target.classList.add("active");
+    }
+
+    document
+      .querySelectorAll(".nav-item")
+      .forEach(btn => {
+
+        btn.classList.toggle(
+          "active",
+          btn.dataset.view === view
+        );
+
+      });
+
+    const titles = {
+      home: ["FAMILY HUB", "Nuestra aventura"],
+      itinerary: ["PLAN", "Itinerario"],
+      packing: ["PREPARACIÓN", "Packing"],
+      places: ["EXPLORAR", "Lugares"],
+      food: ["COMER", "Comida"],
+      activities: ["PLANES", "Actividades"],
+      messages: ["FAMILIA", "Mensajes"],
+      location: ["UBICACIÓN", "Ubicación & Parking"],
+      group: ["FAMILIA", "Mi grupo"],
+      settings: ["APP", "Configuración"]
+    };
+
+    $("pageEyebrow").textContent =
+      titles[view]?.[0] || "FAMILY HUB";
+
+    $("pageTitle").textContent =
+      titles[view]?.[1] || "Nuestra aventura";
+
+    document
+      .querySelector(".sidebar")
+      ?.classList.remove("open");
+  }
+
+  /* =======================================================
+     GROUPS
+     ======================================================= */
+
+  async function loadGroups() {
+
+    if (!onlineMode || !currentUser) {
+      return;
+    }
+
+    const { data: groups, error } =
+      await supabaseClient
+        .from("groups")
+        .select("*")
+        .order("created_at", {
+          ascending: false
+        });
+
+    if (error) {
+
+      console.error(error);
+
+      return;
+    }
+
+    if (!groups?.length) {
+
+      currentGroup = null;
+
+      return;
+    }
+
+    const savedId =
+      localStorage.getItem(STORAGE_GROUP);
+
+    currentGroup =
+      groups.find(g => g.id === savedId) ||
+      groups[0];
+
+    localStorage.setItem(
+      STORAGE_GROUP,
+      currentGroup.id
+    );
+
+    await loadGroupData();
+  }
+
+  async function createGroup() {
+
+    if (!onlineMode) {
+
+      const name =
+        prompt("Nombre del viaje:");
+
+      if (!name) return;
+
+      currentGroup = {
+        id: crypto.randomUUID(),
+        name,
+        destination: "",
+        invite_code:
+          generateInviteCode()
+      };
+
+      data.members = [{
+        id: crypto.randomUUID(),
+        user_id: currentUser.id,
+        role: "owner",
+        name:
+          currentUser.user_metadata?.name ||
+          "Yo"
+      }];
+
+      saveOfflineData();
+
+      toast("Viaje creado.");
+
+      renderAll();
+
+      return;
+    }
+
+    const name =
+      prompt("Nombre del viaje:");
+
+    if (!name) return;
+
+    const destination =
+      prompt("Destino:") || "";
+
+    const invite_code =
+      generateInviteCode();
+
+    const { data: group, error } =
+      await supabaseClient
+        .from("groups")
+        .insert({
+          name,
+          destination,
+          invite_code,
+          owner_id: currentUser.id
+        })
+        .select()
+        .single();
+
+    if (error) {
+
+      toast(translateError(error.message));
+
+      return;
+    }
+
+    const { error: memberError } =
+      await supabaseClient
+        .from("members")
+        .insert({
+          group_id: group.id,
+          user_id: currentUser.id,
+          role: "owner"
+        });
+
+    if (memberError) {
+
+      toast(translateError(memberError.message));
+
+      return;
+    }
+
+    currentGroup = group;
+
+    localStorage.setItem(
+      STORAGE_GROUP,
+      group.id
+    );
+
+    await loadGroupData();
+
+    toast("Viaje creado.");
+
+    renderAll();
+  }
+
+  async function joinGroup() {
+
+    const code =
+      prompt(
+        "Escribe el código de invitación:"
+      )?.trim().toUpperCase();
+
+    if (!code) return;
+
+    if (!onlineMode) {
+
+      toast(
+        "Para unirte a un grupo compartido necesitas conexión."
+      );
+
+      return;
+    }
+
+    /*
+      NOTA:
+      La policy actual de tu SQL no permite a un usuario
+      nuevo buscar grupos por invite_code.
+
+      El SQL patch que aparece después de estos archivos
+      habilita esta función de forma segura.
+    */
+
+    const { data: group, error } =
+      await supabaseClient
+        .from("groups")
+        .select("*")
+        .eq("invite_code", code)
+        .maybeSingle();
+
+    if (error) {
+
+      toast(translateError(error.message));
+
+      return;
+    }
+
+    if (!group) {
+
+      toast("No encontré ese código.");
+
+      return;
+    }
+
+    const { error: memberError } =
+      await supabaseClient
+        .from("members")
+        .insert({
+          group_id: group.id,
+          user_id: currentUser.id,
+          role: "adult"
+        });
+
+    if (memberError) {
+
+      toast(translateError(memberError.message));
+
+      return;
+    }
+
+    currentGroup = group;
+
+    localStorage.setItem(
+      STORAGE_GROUP,
+      group.id
+    );
+
+    await loadGroupData();
+
+    toast("Te uniste al grupo.");
+
+    renderAll();
+  }
+
+  async function loadGroupData() {
+
+    if (!currentGroup) {
+
+      renderAll();
+
+      return;
+    }
+
+    if (!onlineMode) {
+
+      saveOfflineData();
+
+      renderAll();
+
+      return;
+    }
+
+    const gid = currentGroup.id;
+
+    const [
+      events,
+      packing,
+      places,
+      food,
+      activities,
+      messages,
+      members,
+      locations,
+      parking,
+      status
+    ] = await Promise.all([
+
+      fetchTable("events", gid),
+      fetchTable("packing", gid),
+      fetchTable("places", gid),
+      fetchTable("food", gid),
+      fetchTable("activities", gid),
+      fetchTable("messages", gid),
+      fetchTable("members", gid),
+      fetchTable("locations", gid),
+      fetchSingle("parking", gid),
+      fetchSingle("travel_status", gid)
+
+    ]);
+
+    data.events = events;
+    data.packing = packing;
+    data.places = places;
+    data.food = food;
+    data.activities = activities;
+    data.messages = messages;
+    data.members = members;
+    data.locations = locations;
+    data.parking = parking;
+    data.travel_status = status;
+
+    await loadProfiles();
+
+    setupRealtime();
+
+    renderAll();
+  }
+
+  async function fetchTable(table, gid) {
+
+    const { data: rows, error } =
+      await supabaseClient
+        .from(table)
+        .select("*")
+        .eq("group_id", gid)
+        .order("created_at", {
+          ascending: true
+        });
+
+    if (error) {
+
+      console.error(table, error);
+
+      return [];
+    }
+
+    return rows || [];
+  }
+
+  async function fetchSingle(table, gid) {
+
+    const { data: row, error } =
+      await supabaseClient
+        .from(table)
+        .select("*")
+        .eq("group_id", gid)
+        .maybeSingle();
+
+    if (error) {
+
+      console.error(table, error);
+
+      return null;
+    }
+
+    return row;
+  }
+
+  async function loadProfiles() {
+
+    if (!onlineMode || !data.members.length) {
+
+      return;
+    }
+
+    const ids =
+      data.members
+        .map(m => m.user_id)
+        .filter(Boolean);
+
+    const { data: profiles } =
+      await supabaseClient
+        .from("profiles")
+        .select("*")
+        .in("id", ids);
+
+    data.profiles = profiles || [];
+  }
+
+  /* =======================================================
+     GENERIC CRUD
+     ======================================================= */
+
+  async function insertRecord(
+    table,
+    values
+  ) {
+
+    if (!currentGroup) {
+
+      toast("Primero crea o selecciona un viaje.");
+
+      return null;
+    }
+
+    if (!onlineMode) {
+
+      const record = {
+        id: crypto.randomUUID(),
+        group_id: currentGroup.id,
+        created_at:
+          new Date().toISOString(),
+        ...values
+      };
+
+      data[table].push(record);
+
+      saveOfflineData();
+
+      renderAll();
+
+      return record;
+    }
+
+    const { data: record, error } =
+      await supabaseClient
+        .from(table)
+        .insert({
+          group_id: currentGroup.id,
+          ...values
+        })
+        .select()
+        .single();
+
+    if (error) {
+
+      toast(translateError(error.message));
+
+      return null;
+    }
+
+    data[table].push(record);
+
+    renderAll();
+
+    return record;
+  }
+
+  async function updateRecord(
+    table,
+    id,
+    values
+  ) {
+
+    if (!onlineMode) {
+
+      const list = data[table];
+
+      const index =
+        list.findIndex(x => x.id === id);
+
+      if (index >= 0) {
+
+        list[index] = {
+          ...list[index],
+          ...values
+        };
+
+        saveOfflineData();
+
+        renderAll();
+      }
+
+      return;
+    }
+
+    const { data: record, error } =
+      await supabaseClient
+        .from(table)
+        .update(values)
+        .eq("id", id)
+        .select()
+        .single();
+
+    if (error) {
+
+      toast(translateError(error.message));
+
+      return;
+    }
+
+    const index =
+      data[table].findIndex(
+        x => x.id === id
+      );
+
+    if (index >= 0) {
+
+      data[table][index] = record;
+    }
+
+    renderAll();
+  }
+
+  async function deleteRecord(
+    table,
+    id
+  ) {
+
+    if (!confirm("¿Eliminar este elemento?")) {
+      return;
+    }
+
+    if (!onlineMode) {
+
+      data[table] =
+        data[table].filter(
+          x => x.id !== id
+        );
+
+      saveOfflineData();
+
+      renderAll();
+
+      return;
+    }
+
+    const { error } =
+      await supabaseClient
+        .from(table)
+        .delete()
+        .eq("id", id);
+
+    if (error) {
+
+      toast(translateError(error.message));
+
+      return;
+    }
+
+    data[table] =
+      data[table].filter(
+        x => x.id !== id
+      );
+
+    renderAll();
+  }
+
+  /* =======================================================
+     EVENTS
+     ======================================================= */
+
+  function openEventModal(item = null) {
+
+    openModal(
+      item ? "Editar evento" : "Añadir evento",
+      [
+        field("title", "Título", item?.title || "", true),
+        field("date", "Fecha", item?.date || "", false, "date"),
+        field("time", "Hora", item?.time || "", false, "time"),
+        field("tag", "Categoría", item?.tag || "CUSTOM"),
+        field(
+          "description",
+          "Descripción",
+          item?.description || "",
+          false,
+          "textarea"
+        )
+      ],
+      async values => {
+
+        if (item) {
+
+          await updateRecord(
+            "events",
+            item.id,
+            values
+          );
+
+        } else {
+
+          await insertRecord(
+            "events",
+            values
+          );
+        }
+
+        closeModal();
+      }
+    );
+  }
+
+  /* =======================================================
+     PACKING
+     ======================================================= */
+
+  async function addPacking() {
+
+    const name =
+      prompt("¿Qué necesitas llevar?");
+
+    if (!name) return;
+
+    await insertRecord(
+      "packing",
+      {
+        name,
+        done: false
+      }
+    );
+  }
+
+  async function togglePacking(item) {
+
+    await updateRecord(
+      "packing",
+      item.id,
+      {
+        done: !item.done
+      }
+    );
+  }
+
+  /* =======================================================
+     PLACES
+     ======================================================= */
+
+  function openPlaceModal(item = null) {
+
+    openModal(
+      item ? "Editar lugar" : "Añadir lugar",
+      [
+        field("name", "Nombre", item?.name || "", true),
+        field("category", "Categoría", item?.category || "FAMILY"),
+        field(
+          "description",
+          "Descripción",
+          item?.description || "",
+          false,
+          "textarea"
+        )
+      ],
+      async values => {
+
+        if (item) {
+
+          await updateRecord(
+            "places",
+            item.id,
+            values
+          );
+
+        } else {
+
+          await insertRecord(
+            "places",
+            values
+          );
+        }
+
+        closeModal();
+      }
+    );
+  }
+
+  /* =======================================================
+     FOOD
+     ======================================================= */
+
+  function openFoodModal(item = null) {
+
+    openModal(
+      item ? "Editar comida" : "Añadir comida",
+      [
+        field("name", "Nombre", item?.name || "", true),
+        field("category", "Categoría", item?.category || "FOOD"),
+        field(
+          "description",
+          "Descripción",
+          item?.description || "",
+          false,
+          "textarea"
+        )
+      ],
+      async values => {
+
+        if (item) {
+
+          await updateRecord(
+            "food",
+            item.id,
+            values
+          );
+
+        } else {
+
+          await insertRecord(
+            "food",
+            values
+          );
+        }
+
+        closeModal();
+      }
+    );
+  }
+
+  /* =======================================================
+     ACTIVITIES
+     ======================================================= */
+
+  function openActivityModal(item = null) {
+
+    openModal(
+      item ? "Editar actividad" : "Añadir actividad",
+      [
+        field("name", "Nombre", item?.name || "", true),
+        field("category", "Categoría", item?.category || "FAMILY"),
+        field(
+          "description",
+          "Descripción",
+          item?.description || "",
+          false,
+          "textarea"
+        )
+      ],
+      async values => {
+
+        if (item) {
+
+          await updateRecord(
+            "activities",
+            item.id,
+            values
+          );
+
+        } else {
+
+          await insertRecord(
+            "activities",
+            values
+          );
+        }
+
+        closeModal();
+      }
+    );
+  }
+
+  /* =======================================================
+     MESSAGES
+     ======================================================= */
+
+  async function sendMessage(event) {
+
+    event.preventDefault();
+
+    const input = $("messageInput");
+
+    const body =
+      input.value.trim();
+
+    if (!body) return;
+
+    if (!currentGroup) {
+
+      toast("Primero crea un viaje.");
+
+      return;
+    }
+
+    if (!onlineMode) {
+
+      data.messages.push({
+        id: crypto.randomUUID(),
+        group_id: currentGroup.id,
+        user_id: currentUser.id,
+        body,
+        created_at:
+          new Date().toISOString()
+      });
+
+      saveOfflineData();
+
+      input.value = "";
+
+      renderMessages();
+
+      return;
+    }
+
+    const { data: message, error } =
+      await supabaseClient
+        .from("messages")
+        .insert({
+          group_id: currentGroup.id,
+          user_id: currentUser.id,
+          body
+        })
+        .select()
+        .single();
+
+    if (error) {
+
+      toast(translateError(error.message));
+
+      return;
+    }
+
+    data.messages.push(message);
+
+    input.value = "";
+
+    renderMessages();
+  }
+
+  /* =======================================================
+     LOCATION
+     ======================================================= */
+
+  function getCurrentPosition() {
+
+    return new Promise(
+      (resolve, reject) => {
+
+        if (!navigator.geolocation) {
+
+          reject(
+            new Error(
+              "Este navegador no permite ubicación."
+            )
+          );
+
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          reject,
+          {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 10000
+          }
+        );
+      }
+    );
+  }
+
+  async function shareLocation() {
+
+    try {
+
+      const position =
+        await getCurrentPosition();
+
+      const lat =
+        position.coords.latitude;
+
+      const lon =
+        position.coords.longitude;
+
+      if (!currentGroup) {
+
+        toast("Primero crea un viaje.");
+
+        return;
+      }
+
+      if (!onlineMode) {
+
+        data.locations =
+          data.locations.filter(
+            x =>
+              x.user_id !==
+              currentUser.id
+          );
+
+        data.locations.push({
+          id: crypto.randomUUID(),
+          group_id: currentGroup.id,
+          user_id: currentUser.id,
+          lat,
+          lon,
+          name: "Mi ubicación",
+          updated_at:
+            new Date().toISOString()
+        });
+
+        saveOfflineData();
+
+      } else {
+
+        const { error } =
+          await supabaseClient
+            .from("locations")
+            .upsert(
+              {
+                group_id: currentGroup.id,
+                user_id: currentUser.id,
+                lat,
+                lon,
+                name: "Mi ubicación",
+                updated_at:
+                  new Date().toISOString()
+              },
+              {
+                onConflict:
+                  "group_id,user_id"
+              }
+            );
+
+        if (error) {
+
+          toast(translateError(error.message));
+
+          return;
+        }
+
+        await loadGroupData();
+      }
+
+      $("myLocationStatus").textContent =
+        `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+      toast("Ubicación guardada.");
+
+    } catch (error) {
+
+      toast(
+        "No pude obtener tu ubicación. Revisa el permiso del navegador."
+      );
+    }
+  }
+
+  async function saveParking() {
+
+    try {
+
+      const position =
+        await getCurrentPosition();
+
+      const lat =
+        position.coords.latitude;
+
+      const lon =
+        position.coords.longitude;
+
+      if (!currentGroup) {
+
+        toast("Primero crea un viaje.");
+
+        return;
+      }
+
+      if (!onlineMode) {
+
+        data.parking = {
+          group_id: currentGroup.id,
+          user_id: currentUser.id,
+          lat,
+          lon,
+          updated_at:
+            new Date().toISOString()
+        };
+
+        saveOfflineData();
+
+      } else {
+
+        const { error } =
+          await supabaseClient
+            .from("parking")
+            .upsert(
+              {
+                group_id: currentGroup.id,
+                user_id: currentUser.id,
+                lat,
+                lon,
+                updated_at:
+                  new Date().toISOString()
+              },
+              {
+                onConflict: "group_id"
+              }
+            );
+
+        if (error) {
+
+          toast(translateError(error.message));
+
+          return;
+        }
+
+        data.parking =
+          await fetchSingle(
+            "parking",
+            currentGroup.id
+          );
+      }
+
+      $("parkingStatus").textContent =
+        `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+      toast("Parking guardado.");
+
+    } catch (_) {
+
+      toast(
+        "No pude obtener tu ubicación."
+      );
+    }
+  }
+
+  /* =======================================================
+     MEMBERS
+     ======================================================= */
+
+  function openMemberModal() {
+
+    if (!currentGroup) {
+
+      toast("Primero crea un viaje.");
+
+      return;
+    }
+
+    openModal(
+      "Añadir persona",
+      [
+        field(
+          "name",
+          "Nombre",
+          "",
+          true
+        ),
+        field(
+          "role",
+          "Rol",
+          "adult"
+        )
+      ],
+      async values => {
+
+        if (!onlineMode) {
+
+          data.members.push({
+            id: crypto.randomUUID(),
+            group_id: currentGroup.id,
+            user_id:
+              "local-" +
+              crypto.randomUUID(),
+            name: values.name,
+            role: values.role
+          });
+
+          saveOfflineData();
+
+          renderAll();
+
+          closeModal();
+
+          return;
+        }
+
+        /*
+          En el sistema autenticado de Supabase,
+          una persona compartida necesita crear su propia
+          cuenta y entrar mediante el código del grupo.
+        */
+
+        toast(
+          "Para una persona real, comparte el código del grupo para que cree su propia cuenta y se una."
+        );
+
+        closeModal();
+      }
+    );
+  }
+
+  async function removeMember(member) {
+
+    if (!onlineMode) {
+
+      data.members =
+        data.members.filter(
+          m => m.id !== member.id
+        );
+
+      saveOfflineData();
+
+      renderAll();
+
+      return;
+    }
+
+    if (
+      member.user_id ===
+      currentUser.id
+    ) {
+
+      await supabaseClient
+        .from("members")
+        .delete()
+        .eq("id", member.id);
+
+      data.members =
+        data.members.filter(
+          m => m.id !== member.id
+        );
+
+      renderAll();
+
+      return;
+    }
+
+    if (
+      !confirm(
+        "¿Eliminar esta persona del grupo?"
+      )
+    ) {
+      return;
+    }
+
+    const { error } =
+      await supabaseClient
+        .from("members")
+        .delete()
+        .eq("id", member.id);
+
+    if (error) {
+
+      toast(translateError(error.message));
+
+      return;
+    }
+
+    data.members =
+      data.members.filter(
+        m => m.id !== member.id
+      );
+
+    renderAll();
+  }
+
+  /* =======================================================
+     MODAL
+     ======================================================= */
+
+  let modalSaveCallback = null;
+
+  function openModal(
+    title,
+    fields,
+    callback
+  ) {
+
+    $("modalTitle").textContent =
+      title;
+
+    $("modalFields").innerHTML =
+      fields.join("");
+
+    modalSaveCallback = callback;
+
+    show("modal");
+  }
+
+  function closeModal() {
+
+    hide("modal");
+
+    $("modalFields").innerHTML = "";
+
+    modalSaveCallback = null;
+  }
+
+  function field(
+    name,
+    label,
+    value = "",
+    required = false,
+    type = "text"
+  ) {
+
+    if (type === "textarea") {
+
+      return `
+        <div class="modal-field">
+          <label for="modal-${escapeAttr(name)}">
+            ${escapeHTML(label)}
+          </label>
+
+          <textarea
+            id="modal-${escapeAttr(name)}"
+            data-field="${escapeAttr(name)}"
+            rows="4"
+          >${escapeHTML(value)}</textarea>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="modal-field">
+
+        <label for="modal-${escapeAttr(name)}">
+          ${escapeHTML(label)}
+        </label>
+
+        <input
+          id="modal-${escapeAttr(name)}"
+          data-field="${escapeAttr(name)}"
+          type="${escapeAttr(type)}"
+          value="${escapeAttr(value)}"
+          ${required ? "required" : ""}
+        />
+
+      </div>
+    `;
+  }
+
+  async function submitModal(event) {
+
+    event.preventDefault();
+
+    if (!modalSaveCallback) return;
+
+    const values = {};
+
+    $("modalFields")
+      .querySelectorAll("[data-field]")
+      .forEach(input => {
+
+        values[input.dataset.field] =
+          input.value.trim();
+      });
+
+    await modalSaveCallback(values);
+  }
+
+  /* =======================================================
+     RENDER
+     ======================================================= */
+
+  function renderAll() {
+
+    updateHome();
+    renderEvents();
+    renderPacking();
+    renderPlaces();
+    renderFood();
+    renderActivities();
+    renderMessages();
+    renderLocations();
+    renderGroup();
+  }
+
+  function updateHome() {
+
+    $("homeTripName").textContent =
+      currentGroup?.name ||
+      "Crea tu primera aventura";
+
+    $("homeDestination").textContent =
+      currentGroup?.destination ||
+      "Organiza todo en un solo lugar.";
+
+    $("statEvents").textContent =
+      data.events.length;
+
+    const total =
+      data.packing.length;
+
+    const done =
+      data.packing.filter(
+        x => x.done
+      ).length;
+
+    $("statPacking").textContent =
+      `${done}/${total}`;
+
+    $("statPlaces").textContent =
+      data.places.length;
+
+    $("statMembers").textContent =
+      data.members.length;
+
+    $("homeEvents").innerHTML =
+      data.events.length
+        ? data.events
+            .slice(0, 5)
+            .map(eventMiniHTML)
+            .join("")
+        : emptyHTML(
+            "Todavía no hay eventos."
+          );
+
+    $("homeMembers").innerHTML =
+      data.members.length
+        ? data.members
+            .slice(0, 6)
+            .map(memberHTML)
+            .join("")
+        : emptyHTML(
+            "Todavía no hay personas."
+          );
+  }
+
+  function renderEvents() {
+
+    $("eventsList").innerHTML =
+      data.events.length
+        ? data.events
+            .map(eventHTML)
+            .join("")
+        : emptyHTML(
+            "Todavía no tienes eventos. Añade el primero."
+          );
+  }
+
+  function renderPacking() {
+
+    const total =
+      data.packing.length;
+
+    const done =
+      data.packing.filter(
+        x => x.done
+      ).length;
+
+    const percent =
+      total
+        ? Math.round(
+            done / total * 100
+          )
+        : 0;
+
+    $("packingProgressText").textContent =
+      `${percent}%`;
+
+    $("packingProgressBar").style.width =
+      `${percent}%`;
+
+    $("packingList").innerHTML =
+      data.packing.length
+        ? data.packing
+            .map(item => `
+              <div class="check-item ${item.done ? "done" : ""}">
+
+                <div class="check-main">
+
+                  <input
+                    type="checkbox"
+                    ${item.done ? "checked" : ""}
+                    data-packing-toggle="${item.id}"
+                  />
+
+                  <span class="check-name">
+                    ${escapeHTML(item.name)}
+                  </span>
+
+                </div>
+
+                <div class="card-actions">
+
+                  <button
+                    class="delete-btn"
+                    data-delete-table="packing"
+                    data-delete-id="${item.id}"
+                  >
+                    Eliminar
+                  </button>
+
+                </div>
+
+              </div>
+            `)
+            .join("")
+        : emptyHTML(
+            "Tu packing list está vacío."
+          );
+  }
+
+  function renderPlaces() {
+
+    $("placesList").innerHTML =
+      data.places.length
+        ? data.places
+            .map(item =>
+              genericCard(
+                item,
+                "places"
+              )
+            )
+            .join("")
+        : emptyHTML(
+            "Añade lugares que quieran visitar."
+          );
+  }
+
+  function renderFood() {
+
+    $("foodList").innerHTML =
+      data.food.length
+        ? data.food
+            .map(item =>
+              genericCard(
+                item,
+                "food"
+              )
+            )
+            .join("")
+        : emptyHTML(
+            "Añade restaurantes o comidas."
+          );
+  }
+
+  function renderActivities() {
+
+    $("activitiesList").innerHTML =
+      data.activities.length
+        ? data.activities
+            .map(item =>
+              genericCard(
+                item,
+                "activities"
+              )
+            )
+            .join("")
+        : emptyHTML(
+            "Añade actividades para el viaje."
+          );
+  }
+
+  function renderMessages() {
+
+    const list =
+      $("messagesList");
+
+    list.innerHTML =
+      data.messages.length
+        ? data.messages
+            .map(message => {
+
+              const mine =
+                message.user_id ===
+                currentUser?.id;
+
+              const profile =
+                data.profiles.find(
+                  p =>
+                    p.id ===
+                    message.user_id
+                );
+
+              const name =
+                profile?.name ||
+                (mine ? "Yo" : "Familia");
+
+              return `
+                <div class="message ${mine ? "mine" : ""}">
+
+                  <div class="message-author">
+                    ${escapeHTML(name)}
+                  </div>
+
+                  <div class="message-body">
+                    ${escapeHTML(message.body)}
+                  </div>
+
+                  <div class="message-time">
+                    ${formatDateTime(
+                      message.created_at
+                    )}
+                  </div>
+
+                </div>
+              `;
+            })
+            .join("")
+        : emptyHTML(
+            "Todavía no hay mensajes."
+          );
+  }
+
+  function renderLocations() {
+
+    $("locationsList").innerHTML =
+      data.locations.length
+        ? data.locations
+            .map(location => {
+
+              const profile =
+                data.profiles.find(
+                  p =>
+                    p.id ===
+                    location.user_id
+                );
+
+              const name =
+                profile?.name ||
+                (
+                  location.user_id ===
+                  currentUser?.id
+                    ? "Yo"
+                    : "Familia"
+                );
+
+              return `
+                <div class="item-card">
+
+                  <div class="eyebrow">
+                    UBICACIÓN
+                  </div>
+
+                  <h3>
+                    ${escapeHTML(name)}
+                  </h3>
+
+                  <p>
+                    ${location.lat.toFixed(5)},
+                    ${location.lon.toFixed(5)}
+                  </p>
+
+                  <a
+                    class="btn secondary"
+                    target="_blank"
+                    rel="noopener"
+                    href="https://www.google.com/maps?q=${location.lat},${location.lon}"
+                  >
+                    Abrir mapa
+                  </a>
+
+                </div>
+              `;
+            })
+            .join("")
+        : emptyHTML(
+            "Nadie ha compartido ubicación."
+          );
+  }
+
+  function renderGroup() {
+
+    if (!currentGroup) {
+
+      $("groupInfo").innerHTML = `
+        <div class="empty-state">
+          <strong>No tienes un viaje todavía.</strong>
+          <p>
+            Crea uno desde Inicio para comenzar.
+          </p>
+        </div>
+      `;
+
+      $("membersList").innerHTML = "";
+
+      return;
+    }
+
+    $("groupInfo").innerHTML = `
+      <div class="eyebrow">
+        VIAJE ACTUAL
+      </div>
+
+      <h2>
+        ${escapeHTML(currentGroup.name)}
+      </h2>
+
+      <p>
+        ${escapeHTML(
+          currentGroup.destination ||
+          "Sin destino"
+        )}
+      </p>
+
+      <div class="group-code">
+        Código:
+        ${escapeHTML(
+          currentGroup.invite_code ||
+          "LOCAL"
+        )}
+      </div>
+    `;
+
+    $("membersList").innerHTML =
+      data.members.length
+        ? data.members
+            .map(member => `
+              <div class="item-card">
+
+                <div class="member-row">
+
+                  <div class="member-avatar">
+                    ${escapeHTML(
+                      (
+                        getMemberName(member)
+                          .charAt(0) || "?"
+                      ).toUpperCase()
+                    )}
+                  </div>
+
+                  <div class="member-info">
+
+                    <strong>
+                      ${escapeHTML(
+                        getMemberName(member)
+                      )}
+                    </strong>
+
+                    <span>
+                      ${escapeHTML(
+                        member.role || "adult"
+                      )}
+                    </span>
+
+                  </div>
+
+                  <button
+                    class="delete-btn"
+                    data-remove-member="${member.id}"
+                  >
+                    Eliminar
+                  </button>
+
+                </div>
+
+              </div>
+            `)
+            .join("")
+        : emptyHTML(
+            "Todavía no hay miembros."
+          );
+  }
+
+  /* =======================================================
+     HTML HELPERS
+     ======================================================= */
+
+  function eventMiniHTML(event) {
+
+    return `
+      <div class="member-row">
+
+        <div class="member-avatar">
+          ${event.date ? "📅" : "✈"}
+        </div>
+
+        <div class="member-info">
+
+          <strong>
+            ${escapeHTML(event.title)}
+          </strong>
+
+          <span>
+            ${escapeHTML(
+              event.date ||
+              event.time ||
+              ""
+            )}
+          </span>
+
+        </div>
+
+      </div>
+    `;
+  }
+
+  function eventHTML(event) {
+
+    return `
+      <div class="item-card">
+
+        <div class="item-meta">
+
+          ${
+            event.date
+              ? `<span class="tag">
+                   ${escapeHTML(event.date)}
+                 </span>`
+              : ""
+          }
+
+          ${
+            event.time
+              ? `<span class="tag">
+                   ${escapeHTML(event.time)}
+                 </span>`
+              : ""
+          }
+
+          <span class="tag">
+            ${escapeHTML(event.tag || "CUSTOM")}
+          </span>
+
+        </div>
+
+        <h3>
+          ${escapeHTML(event.title)}
+        </h3>
+
+        <p>
+          ${escapeHTML(
+            event.description || "Sin descripción."
+          )}
+        </p>
+
+        <div class="card-actions">
+
+          <button
+            class="edit-btn"
+            data-edit-event="${event.id}"
+          >
+            Editar
+          </button>
+
+          <button
+            class="delete-btn"
+            data-delete-table="events"
+            data-delete-id="${event.id}"
+          >
+            Eliminar
+          </button>
+
+        </div>
+
+      </div>
+    `;
+  }
+
+  function genericCard(item, table) {
+
+    return `
+      <div class="item-card">
+
+        <div class="item-meta">
+          <span class="tag">
+            ${escapeHTML(
+              item.category || "FAMILY"
+            )}
+          </span>
+        </div>
+
+        <h3>
+          ${escapeHTML(item.name)}
+        </h3>
+
+        <p>
+          ${escapeHTML(
+            item.description ||
+            "Sin descripción."
+          )}
+        </p>
+
+        <div class="card-actions">
+
+          <button
+            class="edit-btn"
+            data-edit-table="${table}"
+            data-edit-id="${item.id}"
+          >
+            Editar
+          </button>
+
+          <button
+            class="delete-btn"
+            data-delete-table="${table}"
+            data-delete-id="${item.id}"
+          >
+            Eliminar
+          </button>
+
+        </div>
+
+      </div>
+    `;
+  }
+
+  function memberHTML(member) {
+
+    return `
+      <div class="member-row">
+
+        <div class="member-avatar">
+          ${escapeHTML(
+            getMemberName(member)
+              .charAt(0)
+              .toUpperCase()
+          )}
+        </div>
+
+        <div class="member-info">
+
+          <strong>
+            ${escapeHTML(
+              getMemberName(member)
+            )}
+          </strong>
+
+          <span>
+            ${escapeHTML(
+              member.role || "adult"
+            )}
+          </span>
+
+        </div>
+
+      </div>
+    `;
+  }
+
+  function getMemberName(member) {
+
+    if (member.name) {
+      return member.name;
+    }
+
+    const profile =
+      data.profiles.find(
+        p =>
+          p.id === member.user_id
+      );
+
+    return (
+      profile?.name ||
+      (
+        member.user_id ===
+        currentUser?.id
+          ? "Yo"
+          : "Miembro"
+      )
+    );
+  }
+
+  function emptyHTML(text) {
+
+    return `
+      <div class="empty-state">
+        ${escapeHTML(text)}
+      </div>
+    `;
+  }
+
+  /* =======================================================
+     REALTIME
+     ======================================================= */
+
+  function setupRealtime() {
+
+    if (
+      !onlineMode ||
+      !currentGroup ||
+      !supabaseClient
+    ) {
+      return;
+    }
+
+    if (realtimeChannel) {
+
+      supabaseClient
+        .removeChannel(
+          realtimeChannel
+        );
+    }
+
+    realtimeChannel =
+      supabaseClient
+        .channel(
+          "family-hub-" +
+          currentGroup.id
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "events",
+            filter:
+              `group_id=eq.${currentGroup.id}`
+          },
+          () => loadGroupData()
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "packing",
+            filter:
+              `group_id=eq.${currentGroup.id}`
+          },
+          () => loadGroupData()
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "messages",
+            filter:
+              `group_id=eq.${currentGroup.id}`
+          },
+          () => loadGroupData()
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "locations",
+            filter:
+              `group_id=eq.${currentGroup.id}`
+          },
+          () => loadGroupData()
+        )
+        .subscribe();
+  }
+
+  /* =======================================================
+     EVENTS / BINDINGS
+     ======================================================= */
+
+  function bindEvents() {
+
+    $("saveConfigBtn")
+      .addEventListener(
+        "click",
+        saveConfiguration
+      );
+
+    $("useOfflineFromConfig")
+      .addEventListener(
+        "click",
+        enterOffline
+      );
+
+    $("loginTab")
+      .addEventListener(
+        "click",
+        () => setAuthTab("login")
+      );
+
+    $("signupTab")
+      .addEventListener(
+        "click",
+        () => setAuthTab("signup")
+      );
+
+    $("loginForm")
+      .addEventListener(
+        "submit",
+        login
+      );
+
+    $("signupForm")
+      .addEventListener(
+        "submit",
+        signup
+      );
+
+    $("forgotPasswordBtn")
+      .addEventListener(
+        "click",
+        forgotPassword
+      );
+
+    $("offlineBtn")
+      .addEventListener(
+        "click",
+        enterOffline
+      );
+
+    $("resetConfigBtn")
+      .addEventListener(
+        "click",
+        showConfig
+      );
+
+    $("logoutBtn")
+      .addEventListener(
+        "click",
+        logout
+      );
+
+    $("settingsLogoutBtn")
+      .addEventListener(
+        "click",
+        logout
+      );
+
+    $("settingsConfigBtn")
+      .addEventListener(
+        "click",
+        showConfig
+      );
+
+    $("homeCreateTripBtn")
+      .addEventListener(
+        "click",
+        createGroup
+      );
+
+    $("homeJoinTripBtn")
+      .addEventListener(
+        "click",
+        joinGroup
+      );
+
+    $("addEventBtn")
+      .addEventListener(
+        "click",
+        () => openEventModal()
+      );
+
+    $("addPackingBtn")
+      .addEventListener(
+        "click",
+        addPacking
+      );
+
+    $("addPlaceBtn")
+      .addEventListener(
+        "click",
+        () => openPlaceModal()
+      );
+
+    $("addFoodBtn")
+      .addEventListener(
+        "click",
+        () => openFoodModal()
+      );
+
+    $("addActivityBtn")
+      .addEventListener(
+        "click",
+        () => openActivityModal()
+      );
+
+    $("messageForm")
+      .addEventListener(
+        "submit",
+        sendMessage
+      );
+
+    $("shareLocationBtn")
+      .addEventListener(
+        "click",
+        shareLocation
+      );
+
+    $("saveParkingBtn")
+      .addEventListener(
+        "click",
+        saveParking
+      );
+
+    $("addMemberBtn")
+      .addEventListener(
+        "click",
+        openMemberModal
+      );
+
+    $("modalClose")
+      .addEventListener(
+        "click",
+        closeModal
+      );
+
+    $("modalCancel")
+      .addEventListener(
+        "click",
+        closeModal
+      );
+
+    $("modalBackdrop")
+      .addEventListener(
+        "click",
+        closeModal
+      );
+
+    $("modalForm")
+      .addEventListener(
+        "submit",
+        submitModal
+      );
+
+    $("mobileMenuBtn")
+      .addEventListener(
+        "click",
+        () => {
+          document
+            .querySelector(".sidebar")
+            ?.classList.toggle("open");
+        }
+      );
+
+    document.addEventListener(
+      "click",
+      handleDelegatedClick
+    );
+
+    window.addEventListener(
+      "online",
+      updateConnectionUI
+    );
+
+    window.addEventListener(
+      "offline",
+      updateConnectionUI
+    );
+  }
+
+  async function handleDelegatedClick(event) {
+
+    const nav =
+      event.target.closest(
+        ".nav-item"
+      );
+
+    if (nav) {
+
+      navigate(
+        nav.dataset.view
+      );
+
+      return;
+    }
+
+    const link =
+      event.target.closest(
+        "[data-view-link]"
+      );
+
+    if (link) {
+
+      navigate(
+        link.dataset.viewLink
+      );
+
+      return;
+    }
+
+    const deleteButton =
+      event.target.closest(
+        "[data-delete-table]"
+      );
+
+    if (deleteButton) {
+
+      await deleteRecord(
+        deleteButton.dataset.deleteTable,
+        deleteButton.dataset.deleteId
+      );
+
+      return;
+    }
+
+    const toggle =
+      event.target.closest(
+        "[data-packing-toggle]"
+      );
+
+    if (toggle) {
+
+      const item =
+        data.packing.find(
+          x =>
+            x.id ===
+            toggle.dataset.packingToggle
+        );
+
+      if (item) {
+
+        await togglePacking(item);
+      }
+
+      return;
+    }
+
+    const editEvent =
+      event.target.closest(
+        "[data-edit-event]"
+      );
+
+    if (editEvent) {
+
+      const item =
+        data.events.find(
+          x =>
+            x.id ===
+            editEvent.dataset.editEvent
+        );
+
+      if (item) {
+
+        openEventModal(item);
+      }
+
+      return;
+    }
+
+    const editButton =
+      event.target.closest(
+        "[data-edit-table]"
+      );
+
+    if (editButton) {
+
+      const table =
+        editButton.dataset.editTable;
+
+      const item =
+        data[table].find(
+          x =>
+            x.id ===
+            editButton.dataset.editId
+        );
+
+      if (!item) return;
+
+      if (table === "places") {
+        openPlaceModal(item);
+      }
+
+      if (table === "food") {
+        openFoodModal(item);
+      }
+
+      if (table === "activities") {
+        openActivityModal(item);
+      }
+
+      return;
+    }
+
+    const removeMemberButton =
+      event.target.closest(
+        "[data-remove-member]"
+      );
+
+    if (removeMemberButton) {
+
+      const member =
+        data.members.find(
+          m =>
+            m.id ===
+            removeMemberButton.dataset.removeMember
+        );
+
+      if (member) {
+
+        await removeMember(member);
+      }
+    }
+  }
+
+  /* =======================================================
+     UTILITIES
+     ======================================================= */
+
+  function show(id) {
+    $(id)?.classList.remove("hidden");
+  }
+
+  function hide(id) {
+    $(id)?.classList.add("hidden");
+  }
+
+  function toast(message) {
+
+    const element =
+      $("toast");
+
+    element.textContent =
+      message;
+
+    element.classList.add("show");
+
+    clearTimeout(
+      element._timeout
+    );
+
+    element._timeout =
+      setTimeout(
+        () => {
+          element.classList.remove(
+            "show"
+          );
+        },
+        3200
+      );
+  }
+
+  function setBusy(form, busy) {
+
+    const button =
+      form.querySelector(
+        "button[type=submit]"
+      );
+
+    if (!button) return;
+
+    button.disabled = busy;
+
+    if (busy) {
+
+      button.dataset.originalText =
+        button.textContent;
+
+      button.textContent =
+        "Procesando...";
+
+    } else {
+
+      button.textContent =
+        button.dataset.originalText ||
+        "Guardar";
+    }
+  }
+
+  function generateInviteCode() {
+
+    const chars =
+      "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+    let code = "FAM-";
+
+    for (let i = 0; i < 6; i++) {
+
+      code +=
+        chars[
+          Math.floor(
+            Math.random() *
+            chars.length
+          )
+        ];
+    }
+
+    return code;
+  }
+
+  function formatDateTime(value) {
+
+    if (!value) return "";
+
+    try {
+
+      return new Intl.DateTimeFormat(
+        "es-PR",
+        {
+          dateStyle: "short",
+          timeStyle: "short"
+        }
+      ).format(
+        new Date(value)
+      );
+
+    } catch (_) {
+
+      return "";
+    }
+  }
+
+  function escapeHTML(value) {
+
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function escapeAttr(value) {
+
+    return escapeHTML(value);
+  }
+
+  function translateError(message) {
+
+    const text =
+      String(message || "");
+
+    if (
+      /invalid login credentials/i
+        .test(text)
+    ) {
+      return "Email o contraseña incorrectos.";
+    }
+
+    if (
+      /email not confirmed/i
+        .test(text)
+    ) {
+      return "Primero confirma tu email.";
+    }
+
+    if (
+      /user already registered/i
+        .test(text)
+    ) {
+      return "Ya existe una cuenta con ese email.";
+    }
+
+    if (
+      /password should be at least/i
+        .test(text)
+    ) {
+      return "La contraseña debe tener al menos 6 caracteres.";
+    }
+
+    if (
+      /duplicate key/i
+        .test(text)
+    ) {
+      return "Ese elemento ya existe.";
+    }
+
+    if (
+      /row-level security/i
+        .test(text)
+    ) {
+      return "Supabase bloqueó esta acción por las reglas de seguridad (RLS).";
+    }
+
+    return text;
+  }
+
+})();
