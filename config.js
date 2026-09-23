@@ -1,7 +1,21 @@
-// Crea este archivo solo para tu deployment.
-// La anon key de Supabase está diseñada para estar en el frontend cuando RLS está correctamente configurado.
-// NUNCA pongas aquí una service_role key.
+/* =========================================================
+   NUESTRA AVENTURA · CONFIG
+   =========================================================
+   La primera vez que abras la app, puedes introducir aquí
+   tu configuración de Supabase.
+
+   También puedes dejar los campos vacíos:
+   la aplicación mostrará una pantalla para configurarlos.
+   ========================================================= */
+
 window.APP_CONFIG = {
-  SUPABASE_URL: "https://mimi3100.github.io/Family-Vacay-Planer",
-  SUPABASE_ANON_KEY: "PEGA_AQUI_TU_ANON_KEY"
+  appName: "Nuestra Aventura · Family Hub",
+
+  // Si conoces estos valores, puedes colocarlos aquí.
+  // NO uses la URL de GitHub Pages.
+  SUPABASE_URL: "",
+  SUPABASE_KEY: "",
+
+  // Tu GitHub Pages
+  SITE_URL: "https://mimi3100.github.io/Family-Vacay-Planer/"
 };
