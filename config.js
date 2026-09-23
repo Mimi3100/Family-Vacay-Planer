@@ -6,7 +6,7 @@ window.APP_CONFIG = {
   appName: "Nuestra Aventura · Family Hub",
 
   SUPABASE_URL: "https://zolwiqjlboiqlwmjcnyc.supabase.co",
-  SUPABASE_KEY: "PEGA_AQUI_TU_SB_PUBLISHABLE_KEY",
+  SUPABASE_KEY: "sb_publishable_yAqisND70WXvo2o-Sk5Lvg_-8oIDLKq",
 
    //  GitHub Pages
 
