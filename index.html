@@ -5,7 +5,141 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111827">
   <meta name="description" content="Nuestra Aventura · Family Hub">
+  <link re<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="Nuestra Aventura · Family Hub">
   <link rel="manifest" href="manifest.json">
+  <title>Nuestra Aventura · Family Hub</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+  <div id="offlineBanner" class="offline-banner hidden">Sin conexión · mostrando los últimos datos guardados.</div>
+
+  <div id="authView" class="auth-screen">
+    <div class="auth-card">
+      <div class="brand"><div class="brand-mark">✦</div><div><strong>Nuestra</strong><span>Aventura</span></div></div>
+      <div class="eyebrow">FAMILY TRAVEL HUB</div>
+      <h1>El viaje de todos,<br><em>en un solo lugar.</em></h1>
+      <p class="muted">Entra con tu nombre. No necesitas email, contraseña ni crear una cuenta.</p>
+      <form id="guestForm" class="auth-form">
+        <label>Tu nombre<input id="guestName" type="text" autocomplete="name" placeholder="Ej. Angel" maxlength="60" required></label>
+        <button class="btn primary full" type="submit">Entrar al Family Hub</button>
+      </form>
+      <div id="authMsg" class="auth-message"></div>
+      <div class="auth-divider"><span>sin email · sin contraseña</span></div>
+      <button class="btn secondary full" id="offlineBtn">Continuar solo en este dispositivo</button>
+      <small class="muted">Para compartir un viaje con la familia, entra con tu nombre y usa el código de invitación del viaje.</small>
+    </div>
+  </div>
+
+  <div id="app" class="app-shell hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand"><div class="brand-mark">✦</div><div><strong>Nuestra</strong><span>Aventura</span></div></div>
+        <button class="close-drawer" id="closeDrawerBtn" aria-label="Cerrar menú">×</button>
+      </div>
+      <div class="trip-switcher">
+        <span class="eyebrow">VIAJE ACTUAL</span>
+        <button id="tripSwitcherBtn" class="trip-switcher-btn"><span id="sidebarTripName">Sin viaje</span><span>⌄</span></button>
+        <div id="tripMenu" class="trip-menu hidden"></div>
+      </div>
+      <nav>
+        <button class="nav-item active" data-view="home">⌂ <span>Inicio</span></button>
+        <button class="nav-item" data-view="itinerary">◷ <span>Itinerario</span></button>
+        <button class="nav-item" data-view="places">⌖ <span>Lugares</span></button>
+        <button class="nav-item" data-view="packing">◇ <span>Equipaje</span></button>
+        <button class="nav-item" data-view="food">♡ <span>Comida</span></button>
+        <button class="nav-item" data-view="activities">✧ <span>Actividades</span></button>
+        <button class="nav-item" data-view="map">◎ <span>Mapa & familia</span></button>
+        <button class="nav-item" data-view="airport">✈ <span>Viaje</span></button>
+        <button class="nav-item" data-view="chat">◌ <span>Familia</span></button>
+        <button class="nav-item" data-view="assistant">✦ <span>NOVA</span></button>
+        <button class="nav-item" data-view="settings">⚙ <span>Grupo & ajustes</span></button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="connection-line"><span id="connectionDot"></span><span id="connectionText">Conectado</span></div>
+        <button class="mini-btn" id="themeBtn">◐ Tema</button>
+        <button class="mini-btn" id="signOutBtn">Salir</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="hamburger" id="menuBtn" aria-label="Abrir menú">☰</button>
+        <div class="crumb">FAMILY HUB <span>/</span> <strong id="pageName">Inicio</strong></div>
+        <div class="top-actions"><button class="icon-btn" id="notifyBtn" title="Notificaciones">♢</button><div class="avatar" id="userAvatar">?</div></div>
+      </header>
+
+      <section id="view-home" class="view active-view">
+        <div class="hero">
+          <div>
+            <div class="eyebrow">✦ FAMILY TRAVEL OS</div>
+            <h1 id="heroTitle">Todo el viaje.<br><em>Sin perder el control.</em></h1>
+            <p id="heroSubtitle">Planifica, comparte y mantén a todos sincronizados.</p>
+            <div class="hero-actions"><button class="btn primary" data-jump="itinerary">Ver itinerario →</button><button class="btn secondary" data-jump="settings">Administrar viaje</button></div>
+          </div>
+          <div class="hero-mark"><span>✦</span><small>FAMILY<br>HUB</small></div>
+        </div>
+
+        <div class="section-head"><div><span class="eyebrow">OVERVIEW</span><h2 id="tripTitle">Crea tu primer viaje</h2></div><span class="live"><i></i> SYNC</span></div>
+        <div class="stats-grid">
+          <article class="stat-card"><span>PRÓXIMA SALIDA</span><strong id="daysLeft">—</strong><small id="tripDates">—</small></article>
+          <article class="stat-card"><span>DESTINO</span><strong class="stat-destination" id="destination">—</strong><small id="weatherMeta">Clima</small></article>
+          <article class="stat-card"><span>EQUIPAJE</span><strong id="packPct">0%</strong><small id="packSub">0 de 0</small><div class="progress"><i id="tripProgress"></i></div></article>
+          <article class="stat-card"><span>FAMILIA</span><strong id="familyCount">0</strong><small>personas en el viaje</small></article>
+        </div>
+
+        <div id="noTripHome" class="empty-panel hidden"><div class="empty-icon">✦</div><h2>Empieza una aventura</h2><p>Crea un viaje nuevo o únete al viaje de otra persona usando su código.</p><div><button class="btn primary" id="homeCreateTripBtn">Crear viaje</button><button class="btn secondary" id="homeJoinTripBtn">Unirme con código</button></div></div>
+
+        <div id="tripHomeContent">
+          <div class="two-col">
+            <article class="panel"><div class="panel-head"><div><span class="eyebrow">NEXT UP</span><h2>Próximamente</h2></div><button class="text-btn" data-jump="itinerary">Ver todo →</button></div><div id="nextEvents" class="timeline"></div></article>
+            <article class="panel"><div class="panel-head"><div><span class="eyebrow">QUICK ACTIONS</span><h2>Acciones</h2></div></div><div class="quick-grid"><button data-jump="map">📍 Compartir ubicación</button><button id="saveCarHome">🚗 Guardar carro</button><button data-jump="airport">✈ Estado del viaje</button><button data-jump="assistant">✦ ¿Qué llevo?</button></div></article>
+          </div>
+          <div class="two-col lower-grid">
+            <article class="panel"><div class="panel-head"><div><span class="eyebrow">WEATHER</span><h2>Condiciones</h2></div><button class="text-btn" id="refreshWeatherBtn">Actualizar</button></div><div class="weather-large"><div class="weather-icon" id="weatherIcon">☼</div><div><strong id="weatherTemp">—°F</strong><span id="weatherDesc">Cargando…</span></div></div><div id="weatherForecast" class="forecast-row"></div></article>
+            <article class="panel"><div class="panel-head"><div><span class="eyebrow">WHAT TO WEAR</span><h2>Qué ponerse</h2></div><button class="text-btn" data-jump="assistant">Ver consejos →</button></div><div id="wearSummary" class="wear-summary">Añade actividades al itinerario para recibir sugerencias.</div></article>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-itinerary" class="view"><div class="page-title"><div><span class="eyebrow">PLAN</span><h1>Itinerario</h1><p>Todo editable y compartido con el grupo.</p></div><button class="btn primary" id="addEventBtn">＋ Añadir evento</button></div><div class="filter-row" id="dayFilters"></div><div id="itineraryList" class="event-list"></div></section>
+
+      <section id="view-places" class="view"><div class="page-title"><div><span class="eyebrow">EXPLORE</span><h1>Lugares</h1><p>Guarda lugares y abre navegación.</p></div><button class="btn primary" id="addPlaceBtn">＋ Añadir lugar</button></div><div class="search"><span>⌕</span><input id="placeSearch" placeholder="Buscar lugares…"></div><div id="placesGrid" class="cards-grid"></div></section>
+
+      <section id="view-packing" class="view"><div class="page-title"><div><span class="eyebrow">READY</span><h1>Equipaje</h1><p>Lista compartida por toda la familia.</p></div><button class="btn primary" id="addPackBtn">＋ Añadir</button></div><div class="pack-summary"><div><strong id="summaryPct">0%</strong><span>listo</span></div><div class="progress wide"><i id="summaryBar"></i></div><span id="summaryText">0 / 0</span></div><div id="packingList" class="check-list"></div></section>
+
+      <section id="view-food" class="view"><div class="page-title"><div><span class="eyebrow">TASTE</span><h1>Comida</h1><p>Incluye Quick Bites y restaurantes. Todo editable.</p></div><button class="btn primary" id="addFoodBtn">＋ Añadir comida</button></div><div id="foodGrid" class="cards-grid"></div></section>
+
+      <section id="view-activities" class="view"><div class="page-title"><div><span class="eyebrow">DO MORE</span><h1>Actividades</h1><p>Planes familiares y sugerencias.</p></div><button class="btn primary" id="addActivityBtn">＋ Añadir actividad</button></div><div id="activityGrid" class="cards-grid"></div></section>
+
+      <section id="view-map" class="view"><div class="page-title"><div><span class="eyebrow">LIVE FAMILY</span><h1>Mapa & familia</h1><p>La ubicación se comparte solamente cuando cada persona la activa.</p></div><button class="btn primary" id="shareLocationBtn">📍 Compartir mi ubicación</button></div><div class="map-layout"><div id="map"></div><aside class="side-card"><div class="panel-head"><div><span class="eyebrow">CREW</span><h2>Familia</h2></div></div><div id="membersList"></div><hr><h3>Mi carro</h3><p id="carStatus" class="muted">No hay ubicación guardada.</p><button class="btn secondary full" id="saveCarBtn">Guardar ubicación actual</button><button class="btn ghost full" id="findCarBtn">Navegar al carro</button></aside></div></section>
+
+      <section id="view-airport" class="view"><div class="page-title"><div><span class="eyebrow">TRAVEL MODE</span><h1>Estado del viaje</h1><p>Marca cada paso para que el grupo lo vea.</p></div></div><div class="status-grid" id="travelStatuses"></div><div class="panel flight-panel"><div class="panel-head"><div><span class="eyebrow">FLIGHT</span><h2>Vuelo</h2></div><button class="btn ghost" id="editFlightBtn">Editar</button></div><div id="flightInfo">Añade el número de vuelo en Grupo & ajustes.</div></div></section>
+
+      <section id="view-chat" class="view"><div class="page-title"><div><span class="eyebrow">FAMILY SPACE</span><h1>Chat familiar</h1><p>Mensajes sincronizados en tiempo real cuando hay conexión.</p></div></div><div class="chat-layout"><div class="chat-panel"><div id="messages" class="messages"></div><form id="chatForm" class="chat-form"><input id="chatInput" placeholder="Escribe algo para la familia…" autocomplete="off"><button type="submit">↑</button></form></div><aside class="side-card"><span class="eyebrow">CREW</span><h3>Miembros</h3><div id="chatMembers"></div></aside></div></section>
+
+      <section id="view-assistant" class="view"><div class="page-title"><div><span class="eyebrow">NOVA · TRAVEL CONCIERGE</span><h1>Asistente</h1><p>Responde usando el itinerario, clima, equipaje y actividades reales del viaje.</p></div></div><div class="assistant-box"><div class="ai-header"><div class="ai-orb">✦</div><div><strong>NOVA</strong><span>Travel concierge</span></div></div><div id="aiMessages" class="ai-messages"><div class="ai-bubble">Hola. Puedo ayudarte con qué llevar, qué ponerse, el itinerario, tiempos de ruta y planes familiares.</div></div><div class="suggestions"><button data-q="¿Qué falta en el equipaje?">¿Qué falta?</button><button data-q="¿Qué me pongo?">¿Qué me pongo?</button><button data-q="¿Qué hacemos hoy?">¿Qué hacemos?</button><button data-q="¿Qué hay cerca de la ruta?">¿Qué hay cerca?</button></div><form id="aiForm" class="ai-form"><input id="aiInput" placeholder="Pregúntame sobre tu viaje…" autocomplete="off"><button type="submit">Enviar</button></form></div></section>
+
+      <section id="view-settings" class="view"><div class="page-title"><div><span class="eyebrow">TRIP CONTROL</span><h1>Grupo & ajustes</h1><p>Administra viajes, miembros e información del viaje.</p></div><div class="page-actions"><button class="btn secondary" id="createTripBtn">＋ Nuevo viaje</button><button class="btn primary" id="joinTripBtn">Unirme con código</button></div></div><div class="settings-grid"><article class="panel"><div class="panel-head"><div><span class="eyebrow">TRIP</span><h2>Datos del viaje</h2></div></div><form id="tripForm"><label>Nombre del viaje<input id="tripNameInput" required></label><label>Destino<input id="tripDestinationInput"></label><div class="two-inputs"><label>Inicio<input id="tripStartInput" type="date"></label><label>Fin<input id="tripEndInput" type="date"></label></div><label>Número de vuelo<input id="flightNumberInput" placeholder="Ej. AA123"></label><button class="btn primary" type="submit">Guardar cambios</button></form></article><article class="panel"><div class="panel-head"><div><span class="eyebrow">INVITE</span><h2>Invitar familia</h2></div></div><div class="invite-code" id="inviteCode">—</div><p class="muted">Cada persona entra con su nombre y usa este código para unirse. No necesitan email ni contraseña.</p><div class="button-row"><button class="btn secondary" id="copyCodeBtn">Copiar código</button><button class="btn primary" id="shareInviteBtn">Compartir invitación</button></div><hr><h3>Miembros</h3><div id="adminMembers"></div></article></div></section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal hidden"><div id="modalBackdrop" class="modal-backdrop"></div><div class="modal-card" role="dialog" aria-modal="true"><div class="modal-head"><div><span class="eyebrow" id="modalEyebrow">EDITOR</span><h2 id="modalTitle">Editar</h2></div><button id="modalClose" class="modal-close">×</button></div><form id="modalForm"><div id="modalFields"></div><div class="modal-actions"><button type="button" class="btn ghost" id="modalCancel">Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form></div></div>
+  <div id="toast" class="toast" role="status"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js?v=20260925"></script>
+  <script src="app.js?v=20260925"></script>
+</body>
+</html>
+l="manifest" href="manifest.json">
   <title>Nuestra Aventura · Family Hub</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
