@@ -1,5491 +1,633 @@
 /* =========================================================
-   NUESTRA AVENTURA · FAMILY HUB
-   APP.JS
+   NUESTRA AVENTURA · FAMILY HUB · V4
+   Real Supabase app: auth, multiple trips, shared data,
+   invitations, offline cache, realtime, map, weather and NOVA.
    ========================================================= */
-
 (() => {
   "use strict";
 
-  /* =======================================================
-     STORAGE
-     ======================================================= */
-
-  const STORAGE_CONFIG =
-    "nuestra_aventura_supabase_config";
-
-  const STORAGE_OFFLINE =
-    "nuestra_aventura_offline_data";
-
-  const STORAGE_GROUP =
-    "nuestra_aventura_current_group";
-
-  const STORAGE_AUTH =
-    "nuestra_aventura_auth";
-
-  /* =======================================================
-     BUILT-IN SUPABASE CONFIG
-
-     These are publishable client credentials.
-     NEVER put a service_role key here.
-     ======================================================= */
-
-  const BUILTIN_CONFIG = {
-    SUPABASE_URL:
-      "https://zolwiqjlboiqlwmjcnyc.supabase.co",
-
-    SUPABASE_KEY:
-      "sb_publishable_yAqisND70WXvo2o-Sk5Lvg_-8oIDLKq",
-
-    SITE_URL:
-      "https://mimi3100.github.io/Family-Vacay-Planer/"
+  const $ = (s, root = document) => root.querySelector(s);
+  const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+  const CONFIG = window.APP_CONFIG || {};
+  const SUPABASE_URL = CONFIG.SUPABASE_URL || "https://zolwiqjlboiqlwmjcnyc.supabase.co";
+  const SUPABASE_KEY = CONFIG.SUPABASE_KEY || CONFIG.SUPABASE_ANON_KEY || "";
+  const SITE_URL = CONFIG.SITE_URL || location.href;
+  const STORAGE = {
+    offline: "nuestra_aventura_offline_v4",
+    currentGroup: "nuestra_aventura_current_group_v4",
+    theme: "nuestra_aventura_theme_v4"
   };
 
-  /* =======================================================
-     STATE
-     ======================================================= */
+  const supabaseClient = window.supabase && SUPABASE_KEY
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          storage: localStorage,
+          flowType: "pkce"
+        }
+      })
+    : null;
 
-  let supabaseClient = null;
-
-  let onlineMode = false;
-
+  let onlineMode = !!supabaseClient && navigator.onLine;
   let currentUser = null;
-
   let currentGroup = null;
-
-  let currentView = "home";
-
-  let authListenerRegistered = false;
-
-  let authTransitionRunning = false;
-
-  let authTransitionPromise = null;
-
+  let groups = [];
+  let selectedDay = "Todos";
   let realtimeChannel = null;
+  let mapObj = null;
+  let mapMarkers = new Map();
+  let modalSave = null;
+  let drawerTouch = null;
+  let weatherTimer = null;
 
-  /*
-    Mobile menu touch state.
-  */
-
-  let mobileMenuTouchStartX = 0;
-
-  let mobileMenuTouchStartY = 0;
-
-  let mobileMenuTouchCurrentX = 0;
-
-  let mobileMenuTouchCurrentY = 0;
-
-  let mobileMenuTouchActive = false;
-
-  let mobileMenuPreviousBodyOverflow = "";
-
-  let mobileMenuPreviousBodyTouchAction = "";
-
-  let mobileMenuInitialized = false;
-
-  let data = {
-    events: [],
-    packing: [],
-    places: [],
-    food: [],
-    activities: [],
-    messages: [],
-    members: [],
-    profiles: [],
-    locations: [],
-    parking: null,
-    travel_status: null
+  let data = emptyData();
+  const offlineSeed = {
+    id: "offline-trip",
+    name: "Mi viaje",
+    destination: "Blowing Rock, NC",
+    start_date: "2026-10-02",
+    end_date: "2026-10-08",
+    flight_number: "",
+    invite_code: "LOCAL",
+    owner_id: "offline-user"
   };
 
-  /* =======================================================
-     SHORTCUT
-     ======================================================= */
-
-  const $ = (id) =>
-    document.getElementById(id);
-
-  /* =======================================================
-     INIT
-     ======================================================= */
-
-  document.addEventListener(
-    "DOMContentLoaded",
-    init
-  );
-
-  async function init() {
-    try {
-      bindEvents();
-
-      /*
-        Inicializamos el menú después de que
-        todos los elementos del DOM estén disponibles.
-      */
-
-      initializeMobileMenu();
-    } catch (error) {
-      console.error(
-        "Error inicializando eventos:",
-        error
-      );
-    }
-
-    /*
-      Primero buscamos una configuración válida.
-      Soportamos tanto nombres nuevos como antiguos
-      para evitar problemas con config.js viejo.
-    */
-
-    let config = getAppConfig();
-
-    /*
-      Si existe una configuración válida guardada
-      localmente, la usamos.
-    */
-
-    if (!config.valid) {
-      const savedConfig =
-        readSavedConfig();
-
-      if (savedConfig.valid) {
-        config = savedConfig;
-
-        setNormalizedAppConfig(
-          savedConfig.url,
-          savedConfig.key
-        );
-      }
-    }
-
-    /*
-      Si todavía no tenemos una configuración válida,
-      usamos la configuración incorporada.
-
-      Esto evita que un config.js viejo con:
-      "pega aqui tu project url"
-      rompa la aplicación.
-    */
-
-    if (!config.valid) {
-      config = {
-        url:
-          BUILTIN_CONFIG.SUPABASE_URL,
-
-        key:
-          BUILTIN_CONFIG.SUPABASE_KEY,
-
-        siteUrl:
-          BUILTIN_CONFIG.SITE_URL,
-
-        valid: true
-      };
-
-      setNormalizedAppConfig(
-        config.url,
-        config.key
-      );
-    }
-
-    /*
-      Inicializamos Supabase.
-    */
-
-    if (config.valid) {
-      const connected =
-        await initializeSupabase(
-          config.url,
-          config.key
-        );
-
-      if (connected) {
-        await setupAuthListener();
-
-        await checkExistingSession();
-
-        return;
-      }
-    }
-
-    showAuthOrConfig();
-  }
-
-  /* =======================================================
-     CONFIG HELPERS
-     ======================================================= */
-
-  function getAppConfig() {
-    const appConfig =
-      window.APP_CONFIG || {};
-
-    /*
-      Aceptamos diferentes nombres porque
-      versiones anteriores del proyecto podían
-      utilizar lowercase.
-    */
-
-    const url = String(
-      appConfig.SUPABASE_URL ||
-      appConfig.supabase_url ||
-      ""
-    ).trim();
-
-    const key = String(
-      appConfig.SUPABASE_ANON_KEY ||
-      appConfig.SUPABASE_KEY ||
-      appConfig.supabase_anon_key ||
-      appConfig.supabase_key ||
-      ""
-    ).trim();
-
-    const siteUrl = String(
-      appConfig.SITE_URL ||
-      appConfig.site_url ||
-      BUILTIN_CONFIG.SITE_URL ||
-      window.location.origin
-    ).trim();
-
-    const validUrl =
-      /^https?:\/\/.+/i.test(url);
-
-    /*
-      Detectamos placeholders viejos.
-    */
-
-    const isPlaceholder =
-      /pega\s*aqui/i.test(url) ||
-      /pega\s*aqui/i.test(key) ||
-      /project\s*url/i.test(url);
-
+  function emptyData() {
     return {
-      url,
-      key,
-      siteUrl,
-      valid:
-        validUrl &&
-        Boolean(key) &&
-        !isPlaceholder
+      events: [], packing: [], places: [], food: [], activities: [], messages: [],
+      members: [], profiles: [], locations: [], parking: null, travel_status: null
     };
   }
 
-  function setNormalizedAppConfig(
-    url,
-    key
-  ) {
-    window.APP_CONFIG =
-      window.APP_CONFIG || {};
+  document.addEventListener("DOMContentLoaded", init);
 
-    window.APP_CONFIG.SUPABASE_URL =
-      url;
+  async function init() {
+    applyTheme();
+    bindEvents();
+    setupDrawer();
+    updateConnectionUI();
 
-    window.APP_CONFIG.SUPABASE_KEY =
-      key;
-
-    window.APP_CONFIG.SUPABASE_ANON_KEY =
-      key;
-
-    window.APP_CONFIG.SITE_URL =
-      BUILTIN_CONFIG.SITE_URL;
-  }
-
-  function readSavedConfig() {
-    try {
-      const raw =
-        localStorage.getItem(
-          STORAGE_CONFIG
-        );
-
-      if (!raw) {
-        return {
-          url: "",
-          key: "",
-          valid: false
-        };
-      }
-
-      const parsed =
-        JSON.parse(raw);
-
-      const url = String(
-        parsed.url ||
-        parsed.SUPABASE_URL ||
-        parsed.supabase_url ||
-        ""
-      ).trim();
-
-      const key = String(
-        parsed.key ||
-        parsed.SUPABASE_KEY ||
-        parsed.SUPABASE_ANON_KEY ||
-        parsed.supabase_anon_key ||
-        ""
-      ).trim();
-
-      const valid =
-        /^https?:\/\/.+/i.test(url) &&
-        Boolean(key) &&
-        !/pega\s*aqui/i.test(url) &&
-        !/pega\s*aqui/i.test(key);
-
-      return {
-        url,
-        key,
-        valid
-      };
-    } catch (_) {
-      return {
-        url: "",
-        key: "",
-        valid: false
-      };
-    }
-  }
-
-  /* =======================================================
-     SUPABASE
-     ======================================================= */
-
-  async function initializeSupabase(
-    url,
-    key
-  ) {
-    url =
-      String(url || "").trim();
-
-    key =
-      String(key || "").trim();
-
-    if (
-      !/^https?:\/\/.+/i.test(url)
-    ) {
-      console.error(
-        "Supabase URL inválida:",
-        url
-      );
-
-      return false;
-    }
-
-    if (!key) {
-      console.error(
-        "Supabase key vacía."
-      );
-
-      return false;
-    }
-
-    if (
-      /pega\s*aqui/i.test(url) ||
-      /pega\s*aqui/i.test(key)
-    ) {
-      console.error(
-        "Supabase todavía contiene placeholders."
-      );
-
-      return false;
-    }
-
-    if (
-      !window.supabase ||
-      typeof window.supabase.createClient !==
-        "function"
-    ) {
-      console.error(
-        "La librería de Supabase no está cargada."
-      );
-
-      return false;
-    }
-
-    try {
-      supabaseClient =
-        window.supabase.createClient(
-          url,
-          key,
-          {
-            auth: {
-              persistSession: true,
-              autoRefreshToken: true,
-              detectSessionInUrl: true,
-              storage:
-                window.localStorage,
-              storageKey:
-                STORAGE_AUTH,
-              flowType:
-                "pkce"
-            }
-          }
-        );
-
-      onlineMode = true;
-
-      setNormalizedAppConfig(
-        url,
-        key
-      );
-
-      updateConnectionUI();
-
-      return true;
-    } catch (error) {
-      console.error(
-        "Supabase initialization error:",
-        error
-      );
-
-      supabaseClient = null;
-
-      onlineMode = false;
-
-      return false;
-    }
-  }
-
-  /* =======================================================
-     AUTH LISTENER
-     ======================================================= */
-
-  async function setupAuthListener() {
-    if (
-      authListenerRegistered ||
-      !supabaseClient
-    ) {
-      return;
-    }
-
-    authListenerRegistered = true;
-
-    supabaseClient.auth.onAuthStateChange(
-      (event, session) => {
-        /*
-          Nunca hacemos operaciones pesadas directamente
-          dentro de onAuthStateChange.
-        */
-
-        setTimeout(
-          async () => {
-            try {
-              if (session?.user) {
-                currentUser =
-                  session.user;
-
-                /*
-                  INITIAL_SESSION:
-                  cargar una sesión que ya existía.
-
-                  SIGNED_IN:
-                  también manejamos login,
-                  pero mediante el mismo controlador
-                  protegido contra duplicados.
-                */
-
-                if (
-                  event ===
-                    "INITIAL_SESSION" ||
-                  event ===
-                    "SIGNED_IN"
-                ) {
-                  await handleAuthenticatedUser(
-                    session.user
-                  );
-                }
-
-                return;
-              }
-
-              if (
-                event ===
-                "SIGNED_OUT"
-              ) {
-                currentUser = null;
-
-                currentGroup = null;
-
-                data.members = [];
-
-                closeMobileMenu();
-
-                if (realtimeChannel) {
-                  try {
-                    await supabaseClient
-                      .removeChannel(
-                        realtimeChannel
-                      );
-                  } catch (_) {}
-
-                  realtimeChannel = null;
-                }
-
-                showAuth();
-              }
-            } catch (error) {
-              console.error(
-                "Auth state error:",
-                error
-              );
-            }
-          },
-          0
-        );
-      }
-    );
-  }
-
-  /* =======================================================
-     SESSION
-     ======================================================= */
-
-  async function checkExistingSession() {
     if (!supabaseClient) {
-      showAuth();
+      showAuth(false);
+      enterOffline(false);
       return;
     }
 
-    try {
-      const {
-        data: sessionData,
-        error
-      } =
-        await supabaseClient.auth.getSession();
-
-      if (error) {
-        console.error(
-          "getSession:",
-          error
-        );
-
-        showAuth();
-
+    supabaseClient.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        currentUser = null;
+        currentGroup = null;
+        groups = [];
+        teardownRealtime();
+        showAuth(true);
         return;
       }
-
-      const session =
-        sessionData?.session;
-
       if (session?.user) {
-        currentUser =
-          session.user;
-
-        await handleAuthenticatedUser(
-          session.user
-        );
-      } else {
-        showAuth();
+        currentUser = session.user;
+        queueMicrotask(() => initializeCloudUser());
       }
-    } catch (error) {
-      console.error(
-        "Session check error:",
-        error
-      );
+    });
 
-      showAuth();
-    }
-  }
-
-  async function handleAuthenticatedUser(
-    user
-  ) {
-    if (!user) {
-      return;
-    }
-
-    /*
-      Si otra transición ya está ocurriendo,
-      esperamos a que termine.
-    */
-
-    if (authTransitionRunning) {
-      if (authTransitionPromise) {
-        try {
-          await authTransitionPromise;
-        } catch (_) {}
-      }
-
-      return;
-    }
-
-    authTransitionRunning = true;
-
-    authTransitionPromise =
-      (async () => {
-        try {
-          currentUser = user;
-
-          /*
-            El perfil es secundario.
-          */
-
-          try {
-            await ensureProfile();
-          } catch (error) {
-            console.warn(
-              "Profile error:",
-              error
-            );
-          }
-
-          /*
-            Cargar grupos.
-          */
-
-          try {
-            await loadGroups();
-          } catch (error) {
-            console.warn(
-              "Groups error:",
-              error
-            );
-
-            currentGroup = null;
-          }
-
-          showApp();
-        } finally {
-          authTransitionRunning = false;
-          authTransitionPromise = null;
-        }
-      })();
-
-    await authTransitionPromise;
-  }
-
-  async function ensureProfile() {
-    if (
-      !onlineMode ||
-      !currentUser ||
-      !supabaseClient
-    ) {
-      return;
-    }
-
-    const name =
-      currentUser.user_metadata?.name ||
-      currentUser.user_metadata?.full_name ||
-      currentUser.email?.split("@")[0] ||
-      "Usuario";
-
-    const {
-      error
-    } =
-      await supabaseClient
-        .from("profiles")
-        .upsert(
-          {
-            id:
-              currentUser.id,
-
-            email:
-              currentUser.email || "",
-
-            name
-          },
-          {
-            onConflict:
-              "id"
-          }
-        );
-
-    if (error) {
-      console.warn(
-        "Profile:",
-        error.message
-      );
-    }
-  }
-
-  /* =======================================================
-     CONFIGURATION SCREEN
-     ======================================================= */
-
-  function showAuthOrConfig() {
-    hide("loadingScreen");
-
-    const config =
-      getAppConfig();
-
-    if (config.valid) {
-      showAuth();
+    const { data: sessionData } = await supabaseClient.auth.getSession();
+    if (sessionData.session?.user) {
+      currentUser = sessionData.session.user;
+      await initializeCloudUser();
     } else {
-      showConfig();
+      showAuth(true);
     }
   }
 
-  function showConfig() {
-    closeMobileMenu();
+  function bindEvents() {
+    $$('[data-auth-tab]').forEach(btn => btn.addEventListener("click", () => setAuthTab(btn.dataset.authTab)));
+    $("#loginForm")?.addEventListener("submit", login);
+    $("#signupForm")?.addEventListener("submit", signup);
+    $("#forgotPasswordBtn")?.addEventListener("click", forgotPassword);
+    $("#offlineBtn")?.addEventListener("click", () => enterOffline(true));
+    $("#signOutBtn")?.addEventListener("click", logout);
+    $("#themeBtn")?.addEventListener("click", toggleTheme);
+    $("#menuBtn")?.addEventListener("click", openDrawer);
+    $("#closeDrawerBtn")?.addEventListener("click", closeDrawer);
+    $("#tripSwitcherBtn")?.addEventListener("click", toggleTripMenu);
+    $("#createTripBtn")?.addEventListener("click", createGroup);
+    $("#joinTripBtn")?.addEventListener("click", joinGroup);
+    $("#homeCreateTripBtn")?.addEventListener("click", createGroup);
+    $("#homeJoinTripBtn")?.addEventListener("click", joinGroup);
+    $("#addEventBtn")?.addEventListener("click", () => openEventModal());
+    $("#addPackBtn")?.addEventListener("click", addPacking);
+    $("#addPlaceBtn")?.addEventListener("click", () => openPlaceModal());
+    $("#addFoodBtn")?.addEventListener("click", () => openFoodModal());
+    $("#addActivityBtn")?.addEventListener("click", () => openActivityModal());
+    $("#placeSearch")?.addEventListener("input", renderPlaces);
+    $("#shareLocationBtn")?.addEventListener("click", shareLocation);
+    $("#saveCarBtn")?.addEventListener("click", saveCar);
+    $("#saveCarHome")?.addEventListener("click", saveCar);
+    $("#findCarBtn")?.addEventListener("click", findCar);
+    $("#chatForm")?.addEventListener("submit", sendMessage);
+    $("#aiForm")?.addEventListener("submit", askNOVA);
+    $$(".suggestions button").forEach(b => b.addEventListener("click", () => askNOVA(null, b.dataset.q)));
+    $("#tripForm")?.addEventListener("submit", saveTripSettings);
+    $("#copyCodeBtn")?.addEventListener("click", copyInviteCode);
+    $("#shareInviteBtn")?.addEventListener("click", shareInvite);
+    $("#editFlightBtn")?.addEventListener("click", () => navigate("settings"));
+    $("#refreshWeatherBtn")?.addEventListener("click", () => loadWeather(true));
 
-    hide("loadingScreen");
+    document.addEventListener("click", delegatedClick);
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") {
+        closeDrawer();
+        closeTripMenu();
+        closeModal();
+      }
+    });
+    window.addEventListener("online", async () => {
+      onlineMode = !!supabaseClient;
+      updateConnectionUI();
+      if (currentUser) await loadGroups();
+    });
+    window.addEventListener("offline", () => {
+      onlineMode = false;
+      updateConnectionUI();
+      loadCachedCurrentGroup();
+    });
+  }
 
-    hide("authScreen");
-
-    hide("app");
-
-    show("configScreen");
-
-    const config =
-      getAppConfig();
-
-    if ($("setupUrl")) {
-      $("setupUrl").value =
-        config.url || "";
+  async function delegatedClick(e) {
+    const nav = e.target.closest(".nav-item,[data-jump]");
+    if (nav) {
+      e.preventDefault();
+      navigate(nav.dataset.view || nav.dataset.jump);
+      return;
     }
-
-    if ($("setupKey")) {
-      $("setupKey").value =
-        config.key || "";
+    const edit = e.target.closest("[data-edit-table]");
+    if (edit) {
+      const item = data[edit.dataset.editTable]?.find(x => x.id === edit.dataset.editId);
+      if (item) {
+        if (edit.dataset.editTable === "places") openPlaceModal(item);
+        if (edit.dataset.editTable === "food") openFoodModal(item);
+        if (edit.dataset.editTable === "activities") openActivityModal(item);
+      }
+      return;
+    }
+    const editEvent = e.target.closest("[data-edit-event]");
+    if (editEvent) {
+      const item = data.events.find(x => x.id === editEvent.dataset.editEvent);
+      if (item) openEventModal(item);
+      return;
+    }
+    const del = e.target.closest("[data-delete-table]");
+    if (del) {
+      await deleteRecord(del.dataset.deleteTable, del.dataset.deleteId);
+      return;
+    }
+    const pack = e.target.closest("[data-pack-toggle]");
+    if (pack) {
+      const item = data.packing.find(x => x.id === pack.dataset.packToggle);
+      if (item) await updateRecord("packing", item.id, { done: pack.checked });
+      return;
+    }
+    const remove = e.target.closest("[data-remove-member]");
+    if (remove) {
+      const member = data.members.find(m => m.id === remove.dataset.removeMember);
+      if (member) await removeMember(member);
+      return;
+    }
+    const trip = e.target.closest("[data-select-trip]");
+    if (trip) {
+      await selectGroup(trip.dataset.selectTrip);
+      return;
     }
   }
 
-  async function saveConfiguration() {
-    const url =
-      $("setupUrl")
-        ?.value
-        .trim() || "";
-
-    const key =
-      $("setupKey")
-        ?.value
-        .trim() || "";
-
-    if ($("configError")) {
-      $("configError").textContent =
-        "";
-    }
-
-    if (
-      !/^https?:\/\/.+/i.test(url)
-    ) {
-      $("configError").textContent =
-        "La Project URL debe comenzar con https://";
-
-      return;
-    }
-
-    if (!key) {
-      $("configError").textContent =
-        "Pega la Publishable/Anon Key.";
-
-      return;
-    }
-
-    const connected =
-      await initializeSupabase(
-        url,
-        key
-      );
-
-    if (!connected) {
-      $("configError").textContent =
-        "No pude inicializar Supabase. Verifica la URL y la key.";
-
-      return;
-    }
-
-    localStorage.setItem(
-      STORAGE_CONFIG,
-      JSON.stringify({
-        url,
-        key
-      })
-    );
-
-    setNormalizedAppConfig(
-      url,
-      key
-    );
-
-    await setupAuthListener();
-
-    toast(
-      "Supabase conectado."
-    );
-
-    showAuth();
-  }
-
-  /* =======================================================
-     AUTH UI
-     ======================================================= */
-
-  function showAuth() {
-    closeMobileMenu();
-
-    hide("loadingScreen");
-
-    hide("configScreen");
-
-    hide("app");
-
-    show("authScreen");
-
-    setAuthTab("login");
-
-    if ($("authMessage")) {
-      $("authMessage").textContent =
-        "";
-    }
+  /* ---------------- AUTH ---------------- */
+  function showAuth(show = true) {
+    $("#authView")?.classList.toggle("hidden", !show);
+    $("#app")?.classList.toggle("hidden", show);
+    if (show) setAuthMessage("");
   }
 
   function setAuthTab(type) {
-    const login =
-      type === "login";
-
-    $("loginTab")
-      ?.classList
-      .toggle(
-        "active",
-        login
-      );
-
-    $("signupTab")
-      ?.classList
-      .toggle(
-        "active",
-        !login
-      );
-
-    $("loginForm")
-      ?.classList
-      .toggle(
-        "hidden",
-        !login
-      );
-
-    $("signupForm")
-      ?.classList
-      .toggle(
-        "hidden",
-        login
-      );
-
-    if ($("authMessage")) {
-      $("authMessage").textContent =
-        "";
-    }
+    const login = type === "login";
+    $("#loginForm")?.classList.toggle("hidden", !login);
+    $("#signupForm")?.classList.toggle("hidden", login);
+    $$('[data-auth-tab]').forEach(b => b.classList.toggle("active", b.dataset.authTab === type));
+    setAuthMessage("");
   }
 
-  /* =======================================================
-     LOGIN
-     ======================================================= */
-
-  async function login(event) {
-    event.preventDefault();
-
-    const form =
-      event.currentTarget;
-
-    const message =
-      $("authMessage");
-
-    if (message) {
-      message.textContent =
-        "";
-    }
-
-    if (
-      !supabaseClient ||
-      !onlineMode
-    ) {
-      if (message) {
-        message.textContent =
-          "La conexión con Supabase no está disponible. Recarga la aplicación.";
-      }
-
-      return;
-    }
-
-    const email =
-      $("loginEmail")
-        ?.value
-        .trim() || "";
-
-    const password =
-      $("loginPassword")
-        ?.value || "";
-
-    if (!email) {
-      if (message) {
-        message.textContent =
-          "Escribe tu email.";
-      }
-
-      return;
-    }
-
-    if (!password) {
-      if (message) {
-        message.textContent =
-          "Escribe tu contraseña.";
-      }
-
-      return;
-    }
-
-    setBusy(
-      form,
-      true
-    );
-
-    try {
-      const {
-        data: result,
-        error
-      } =
-        await supabaseClient.auth
-          .signInWithPassword({
-            email,
-            password
-          });
-
-      if (error) {
-        console.error(
-          "Supabase login:",
-          error
-        );
-
-        if ($("loginEmail")) {
-          $("loginEmail").value =
-            email;
-        }
-
-        if ($("loginPassword")) {
-          $("loginPassword").value =
-            password;
-        }
-
-        if (message) {
-          message.textContent =
-            translateError(
-              error.message
-            );
-        }
-
-        return;
-      }
-
-      if (!result?.user) {
-        if (message) {
-          message.textContent =
-            "Supabase no devolvió un usuario válido.";
-        }
-
-        return;
-      }
-
-      currentUser =
-        result.user;
-
-      await handleAuthenticatedUser(
-        result.user
-      );
-
-      if ($("loginPassword")) {
-        $("loginPassword").value =
-          "";
-      }
-    } catch (error) {
-      console.error(
-        "LOGIN ERROR:",
-        error
-      );
-
-      if ($("loginEmail")) {
-        $("loginEmail").value =
-          email;
-      }
-
-      if ($("loginPassword")) {
-        $("loginPassword").value =
-          password;
-      }
-
-      if (message) {
-        message.textContent =
-          translateError(
-            error?.message ||
-            "No pude iniciar sesión."
-          );
-      }
-    } finally {
-      setBusy(
-        form,
-        false
-      );
-    }
+  async function login(e) {
+    e.preventDefault();
+    if (!supabaseClient) return setAuthMessage("Supabase no está configurado.");
+    const email = $("#loginEmail").value.trim();
+    const password = $("#loginPassword").value;
+    setAuthMessage("Entrando…");
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) setAuthMessage(translateError(error.message));
   }
 
-  /* =======================================================
-     SIGNUP
-     ======================================================= */
-
-  async function signup(event) {
-    event.preventDefault();
-
-    const form =
-      event.currentTarget;
-
-    if (!supabaseClient) {
-      $("authMessage").textContent =
-        "Configura Supabase primero.";
-
-      return;
-    }
-
-    const name =
-      $("signupName")
-        ?.value
-        .trim() || "";
-
-    const email =
-      $("signupEmail")
-        ?.value
-        .trim() || "";
-
-    const password =
-      $("signupPassword")
-        ?.value || "";
-
-    const password2 =
-      $("signupPassword2")
-        ?.value || "";
-
-    if (!name) {
-      $("authMessage").textContent =
-        "Escribe tu nombre.";
-
-      return;
-    }
-
-    if (!email) {
-      $("authMessage").textContent =
-        "Escribe tu email.";
-
-      return;
-    }
-
-    if (!password) {
-      $("authMessage").textContent =
-        "Escribe una contraseña.";
-
-      return;
-    }
-
-    if (password !== password2) {
-      $("authMessage").textContent =
-        "Las contraseñas no coinciden.";
-
-      return;
-    }
-
-    if (password.length < 6) {
-      $("authMessage").textContent =
-        "La contraseña debe tener al menos 6 caracteres.";
-
-      return;
-    }
-
-    setBusy(
-      form,
-      true
-    );
-
-    try {
-      const {
-        data: result,
-        error
-      } =
-        await supabaseClient.auth
-          .signUp({
-            email,
-            password,
-            options: {
-              data: {
-                name
-              },
-
-              emailRedirectTo:
-                window.APP_CONFIG?.SITE_URL ||
-                BUILTIN_CONFIG.SITE_URL ||
-                window.location.origin
-            }
-          });
-
-      if (error) {
-        $("authMessage").textContent =
-          translateError(
-            error.message
-          );
-
-        return;
-      }
-
-      if (result?.session && result?.user) {
-        currentUser =
-          result.user;
-
-        await handleAuthenticatedUser(
-          result.user
-        );
-      } else {
-        $("authMessage").textContent =
-          "Cuenta creada. Revisa tu email para confirmar la cuenta y luego entra.";
-      }
-    } catch (error) {
-      console.error(
-        "SIGNUP ERROR:",
-        error
-      );
-
-      $("authMessage").textContent =
-        translateError(
-          error?.message ||
-          "No pude crear la cuenta."
-        );
-    } finally {
-      setBusy(
-        form,
-        false
-      );
+  async function signup(e) {
+    e.preventDefault();
+    if (!supabaseClient) return setAuthMessage("Supabase no está configurado.");
+    const name = $("#signupName").value.trim();
+    const email = $("#signupEmail").value.trim();
+    const password = $("#signupPassword").value;
+    const password2 = $("#signupPassword2").value;
+    if (password !== password2) return setAuthMessage("Las contraseñas no coinciden.");
+    setAuthMessage("Creando cuenta…");
+    const { data: result, error } = await supabaseClient.auth.signUp({
+      email,
+      password,
+      options: { data: { name }, emailRedirectTo: SITE_URL }
+    });
+    if (error) return setAuthMessage(translateError(error.message));
+    if (result.session) {
+      currentUser = result.user;
+      await initializeCloudUser();
+    } else {
+      setAuthMessage("Cuenta creada. Revisa tu email para confirmar la cuenta si Supabase tiene esa opción activada.");
     }
   }
-
-  /* =======================================================
-     PASSWORD RESET
-     ======================================================= */
 
   async function forgotPassword() {
-    if (!supabaseClient) {
-      $("authMessage").textContent =
-        "Configura Supabase primero.";
-
-      return;
-    }
-
-    const email =
-      $("loginEmail")
-        ?.value
-        .trim() || "";
-
-    if (!email) {
-      $("authMessage").textContent =
-        "Escribe tu email primero.";
-
-      return;
-    }
-
-    try {
-      const {
-        error
-      } =
-        await supabaseClient.auth
-          .resetPasswordForEmail(
-            email,
-            {
-              redirectTo:
-                window.APP_CONFIG?.SITE_URL ||
-                BUILTIN_CONFIG.SITE_URL ||
-                window.location.origin
-            }
-          );
-
-      $("authMessage").textContent =
-        error
-          ? translateError(
-              error.message
-            )
-          : "Te envié instrucciones para cambiar tu contraseña.";
-    } catch (error) {
-      console.error(
-        "PASSWORD RESET:",
-        error
-      );
-
-      $("authMessage").textContent =
-        translateError(
-          error?.message ||
-          "No pude enviar el email."
-        );
-    }
+    const email = $("#loginEmail")?.value.trim();
+    if (!email) return setAuthMessage("Escribe tu email primero.");
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: SITE_URL });
+    setAuthMessage(error ? translateError(error.message) : "Te envié el enlace para cambiar tu contraseña.");
   }
-
-  /* =======================================================
-     LOGOUT
-     ======================================================= */
 
   async function logout() {
-    closeMobileMenu();
-
-    try {
-      if (
-        onlineMode &&
-        supabaseClient
-      ) {
-        await supabaseClient.auth
-          .signOut();
-      }
-    } catch (error) {
-      console.error(
-        "Logout:",
-        error
-      );
-    }
-
-    currentUser = null;
-
-    currentGroup = null;
-
-    localStorage.removeItem(
-      STORAGE_GROUP
-    );
-
-    data = {
-      events: [],
-      packing: [],
-      places: [],
-      food: [],
-      activities: [],
-      messages: [],
-      members: [],
-      profiles: [],
-      locations: [],
-      parking: null,
-      travel_status: null
-    };
-
-    showAuth();
+    if (supabaseClient && currentUser) await supabaseClient.auth.signOut();
+    else enterOffline(false);
   }
 
-  /* =======================================================
-     OFFLINE
-     ======================================================= */
-
-  function enterOffline() {
-    closeMobileMenu();
-
-    onlineMode = false;
-
-    supabaseClient = null;
-
-    currentUser = {
-      id:
-        "offline-user",
-
-      email:
-        "offline@local",
-
-      user_metadata: {
-        name:
-          "Modo Offline"
-      }
-    };
-
-    loadOfflineData();
-
-    showApp();
+  async function initializeCloudUser() {
+    showAuth(false);
+    onlineMode = !!supabaseClient && navigator.onLine;
+    await ensureProfile();
+    await loadGroups();
   }
 
-  function loadOfflineData() {
-    try {
-      const saved =
-        JSON.parse(
-          localStorage.getItem(
-            STORAGE_OFFLINE
-          ) || "{}"
-        );
-
-      data = {
-        events:
-          saved.events || [],
-
-        packing:
-          saved.packing || [],
-
-        places:
-          saved.places || [],
-
-        food:
-          saved.food || [],
-
-        activities:
-          saved.activities || [],
-
-        messages:
-          saved.messages || [],
-
-        members:
-          saved.members || [],
-
-        profiles:
-          saved.profiles || [],
-
-        locations:
-          saved.locations || [],
-
-        parking:
-          saved.parking || null,
-
-        travel_status:
-          saved.travel_status || null
-      };
-
-      currentGroup =
-        saved.group || null;
-    } catch (_) {
-      data = {
-        events: [],
-        packing: [],
-        places: [],
-        food: [],
-        activities: [],
-        messages: [],
-        members: [],
-        profiles: [],
-        locations: [],
-        parking: null,
-        travel_status: null
-      };
-    }
+  async function ensureProfile() {
+    if (!currentUser || !supabaseClient) return;
+    const name = currentUser.user_metadata?.name || currentUser.email?.split("@")[0] || "Usuario";
+    const { error } = await supabaseClient.from("profiles").upsert({
+      id: currentUser.id, email: currentUser.email || "", name
+    }, { onConflict: "id" });
+    if (error) console.warn("Profile:", error.message);
   }
 
-  function saveOfflineData() {
-    if (onlineMode) return;
-
-    localStorage.setItem(
-      STORAGE_OFFLINE,
-      JSON.stringify({
-        ...data,
-        group:
-          currentGroup
-      })
-    );
-  }
-
-  /* =======================================================
-     APP
-     ======================================================= */
-
-  function showApp() {
-    closeMobileMenu();
-
-    hide("loadingScreen");
-
-    hide("configScreen");
-
-    hide("authScreen");
-
-    show("app");
-
-    updateUserUI();
-
-    updateConnectionUI();
-
-    navigate("home");
-
-    renderAll();
-  }
-
-  function updateUserUI() {
-    const name =
-      currentUser?.user_metadata?.name ||
-      currentUser?.user_metadata?.full_name ||
-      currentUser?.email?.split("@")[0] ||
-      "Invitada";
-
-    if ($("userNameDisplay")) {
-      $("userNameDisplay").textContent =
-        name;
-    }
-
-    if ($("settingsUserName")) {
-      $("settingsUserName").textContent =
-        name;
-    }
-
-    if ($("settingsUserEmail")) {
-      $("settingsUserEmail").textContent =
-        currentUser?.email ||
-        "Modo offline";
-    }
-
-    const avatar =
-      $("userPill")
-        ?.querySelector(".avatar");
-
-    if (avatar) {
-      avatar.textContent =
-        name
-          .charAt(0)
-          .toUpperCase();
-    }
-  }
-
-  function updateConnectionUI() {
-    const badge =
-      $("connectionBadge");
-
-    if (!badge) return;
-
-    const online =
-      onlineMode &&
-      navigator.onLine;
-
-    badge.classList.toggle(
-      "online",
-      online
-    );
-
-    const label =
-      badge.querySelector(
-        "span:last-child"
-      );
-
-    if (label) {
-      label.textContent =
-        online
-          ? "Conectado"
-          : "Offline";
-    }
-
-    if ($("settingsConnection")) {
-      $("settingsConnection")
-        .textContent =
-          online
-            ? "Conectado a Supabase"
-            : "Modo offline";
-    }
-  }
-
-  /* =======================================================
-     NAVIGATION
-     ======================================================= */
-
-  function navigate(view) {
-    currentView =
-      view;
-
-    /*
-      Siempre cerramos el menú al navegar.
-      Esto evita que el drawer quede abierto
-      encima de la nueva pantalla.
-    */
-
-    closeMobileMenu();
-
-    document
-      .querySelectorAll(".view")
-      .forEach(
-        el => {
-          el.classList.remove(
-            "active"
-          );
-        }
-      );
-
-    const target =
-      $("view-" + view);
-
-    if (target) {
-      target.classList.add(
-        "active"
-      );
-    }
-
-    document
-      .querySelectorAll(".nav-item")
-      .forEach(
-        btn => {
-          btn.classList.toggle(
-            "active",
-            btn.dataset.view ===
-              view
-          );
-        }
-      );
-
-    const titles = {
-      home: [
-        "FAMILY HUB",
-        "Nuestra aventura"
-      ],
-
-      itinerary: [
-        "PLAN",
-        "Itinerario"
-      ],
-
-      packing: [
-        "PREPARACIÓN",
-        "Packing"
-      ],
-
-      places: [
-        "EXPLORAR",
-        "Lugares"
-      ],
-
-      food: [
-        "COMER",
-        "Comida"
-      ],
-
-      activities: [
-        "PLANES",
-        "Actividades"
-      ],
-
-      messages: [
-        "FAMILIA",
-        "Mensajes"
-      ],
-
-      location: [
-        "UBICACIÓN",
-        "Ubicación & Parking"
-      ],
-
-      group: [
-        "FAMILIA",
-        "Mi grupo"
-      ],
-
-      settings: [
-        "APP",
-        "Configuración"
-      ]
-    };
-
-    if ($("pageEyebrow")) {
-      $("pageEyebrow")
-        .textContent =
-          titles[view]?.[0] ||
-          "FAMILY HUB";
-    }
-
-    if ($("pageTitle")) {
-      $("pageTitle")
-        .textContent =
-          titles[view]?.[1] ||
-          "Nuestra aventura";
-    }
-  }
-
-  /* =======================================================
-     MOBILE MENU
-     ======================================================= */
-
-  function getMobileSidebar() {
-    return document.querySelector(
-      ".sidebar"
-    );
-  }
-
-  function createMobileMenuOverlay() {
-    if (
-      document.querySelector(
-        ".mobile-menu-overlay"
-      )
-    ) {
-      return;
-    }
-
-    const overlay =
-      document.createElement(
-        "div"
-      );
-
-    overlay.className =
-      "mobile-menu-overlay";
-
-    Object.assign(
-      overlay.style,
-      {
-        position:
-          "fixed",
-
-        inset:
-          "0",
-
-        zIndex:
-          "998",
-
-        background:
-          "rgba(20, 15, 30, 0.30)",
-
-        opacity:
-          "0",
-
-        visibility:
-          "hidden",
-
-        pointerEvents:
-          "none",
-
-        transition:
-          "opacity 0.25s ease, visibility 0.25s ease",
-
-        WebkitTapHighlightColor:
-          "transparent"
-      }
-    );
-
-    overlay.addEventListener(
-      "click",
-      event => {
-        event.preventDefault();
-
-        event.stopPropagation();
-
-        closeMobileMenu();
-      }
-    );
-
-    document.body.appendChild(
-      overlay
-    );
-
-    const sidebar =
-      getMobileSidebar();
-
-    if (sidebar) {
-      /*
-        El sidebar debe estar por encima
-        del overlay.
-      */
-
-      sidebar.style.zIndex =
-        "999";
-    }
-  }
-
-  function updateMobileMenuOverlay() {
-    const sidebar =
-      getMobileSidebar();
-
-    const overlay =
-      document.querySelector(
-        ".mobile-menu-overlay"
-      );
-
-    if (
-      !sidebar ||
-      !overlay
-    ) {
-      return;
-    }
-
-    const open =
-      sidebar.classList.contains(
-        "open"
-      );
-
-    overlay.style.opacity =
-      open
-        ? "1"
-        : "0";
-
-    overlay.style.visibility =
-      open
-        ? "visible"
-        : "hidden";
-
-    overlay.style.pointerEvents =
-      open
-        ? "auto"
-        : "none";
-  }
-
-  function openMobileMenu() {
-    const sidebar =
-      getMobileSidebar();
-
-    if (!sidebar) {
-      return;
-    }
-
-    createMobileMenuOverlay();
-
-    /*
-      Guardamos los valores originales para
-      restaurarlos al cerrar.
-    */
-
-    if (
-      !document.body.classList.contains(
-        "mobile-menu-open"
-      )
-    ) {
-      mobileMenuPreviousBodyOverflow =
-        document.body.style.overflow;
-
-      mobileMenuPreviousBodyTouchAction =
-        document.body.style.touchAction;
-    }
-
-    /*
-      Evita que la página de atrás
-      haga scroll mientras el menú está abierto.
-    */
-
-    document.body.style.overflow =
-      "hidden";
-
-    document.body.style.touchAction =
-      "pan-y";
-
-    document.body.classList.add(
-      "mobile-menu-open"
-    );
-
-    /*
-      Quitamos cualquier transformación
-      residual de un swipe anterior.
-    */
-
-    sidebar.style.transform =
-      "";
-
-    sidebar.style.transition =
-      "";
-
-    sidebar.classList.add(
-      "open"
-    );
-
-    updateMobileMenuOverlay();
-  }
-
-  function closeMobileMenu() {
-    const sidebar =
-      getMobileSidebar();
-
-    if (sidebar) {
-      sidebar.classList.remove(
-        "open"
-      );
-
-      /*
-        Limpiamos cualquier transformación
-        que haya quedado del swipe.
-      */
-
-      sidebar.style.transform =
-        "";
-
-      sidebar.style.transition =
-        "";
-    }
-
-    document.body.classList.remove(
-      "mobile-menu-open"
-    );
-
-    /*
-      Restauramos el scroll normal.
-    */
-
-    document.body.style.overflow =
-      mobileMenuPreviousBodyOverflow;
-
-    document.body.style.touchAction =
-      mobileMenuPreviousBodyTouchAction;
-
-    const overlay =
-      document.querySelector(
-        ".mobile-menu-overlay"
-      );
-
-    if (overlay) {
-      overlay.style.opacity =
-        "0";
-
-      overlay.style.visibility =
-        "hidden";
-
-      overlay.style.pointerEvents =
-        "none";
-    }
-
-    mobileMenuTouchActive =
-      false;
-
-    mobileMenuTouchStartX =
-      0;
-
-    mobileMenuTouchStartY =
-      0;
-
-    mobileMenuTouchCurrentX =
-      0;
-
-    mobileMenuTouchCurrentY =
-      0;
-  }
-
-  function toggleMobileMenu() {
-    const sidebar =
-      getMobileSidebar();
-
-    if (!sidebar) {
-      return;
-    }
-
-    if (
-      sidebar.classList.contains(
-        "open"
-      )
-    ) {
-      closeMobileMenu();
-    } else {
-      openMobileMenu();
-    }
-  }
-
-  function setupMobileMenuTouch() {
-    const sidebar =
-      getMobileSidebar();
-
-    if (
-      !sidebar ||
-      sidebar.dataset.mobileTouchReady ===
-        "true"
-    ) {
-      return;
-    }
-
-    sidebar.dataset.mobileTouchReady =
-      "true";
-
-    /*
-      TOUCH START
-    */
-
-    sidebar.addEventListener(
-      "touchstart",
-      event => {
-        if (
-          !sidebar.classList.contains(
-            "open"
-          )
-        ) {
-          return;
-        }
-
-        const touch =
-          event.touches?.[0];
-
-        if (!touch) {
-          return;
-        }
-
-        mobileMenuTouchStartX =
-          touch.clientX;
-
-        mobileMenuTouchStartY =
-          touch.clientY;
-
-        mobileMenuTouchCurrentX =
-          touch.clientX;
-
-        mobileMenuTouchCurrentY =
-          touch.clientY;
-
-        mobileMenuTouchActive =
-          true;
-
-        /*
-          Durante el gesto quitamos
-          temporalmente la transición.
-        */
-
-        sidebar.style.transition =
-          "none";
-      },
-      {
-        passive:
-          true
-      }
-    );
-
-    /*
-      TOUCH MOVE
-    */
-
-    sidebar.addEventListener(
-      "touchmove",
-      event => {
-        if (
-          !mobileMenuTouchActive ||
-          !sidebar.classList.contains(
-            "open"
-          )
-        ) {
-          return;
-        }
-
-        const touch =
-          event.touches?.[0];
-
-        if (!touch) {
-          return;
-        }
-
-        mobileMenuTouchCurrentX =
-          touch.clientX;
-
-        mobileMenuTouchCurrentY =
-          touch.clientY;
-
-        const deltaX =
-          mobileMenuTouchCurrentX -
-          mobileMenuTouchStartX;
-
-        const deltaY =
-          mobileMenuTouchCurrentY -
-          mobileMenuTouchStartY;
-
-        /*
-          Solo consideramos swipe horizontal
-          si el movimiento horizontal es mayor
-          que el vertical.
-
-          Además, solo permitimos swipe
-          hacia la izquierda.
-        */
-
-        if (
-          Math.abs(deltaX) <=
-          Math.abs(deltaY)
-        ) {
-          return;
-        }
-
-        if (deltaX >= 0) {
-          return;
-        }
-
-        const width =
-          Math.max(
-            sidebar.offsetWidth,
-            1
-          );
-
-        const amount =
-          Math.min(
-            Math.abs(deltaX),
-            width
-          );
-
-        sidebar.style.transform =
-          `translateX(-${amount}px)`;
-
-        const overlay =
-          document.querySelector(
-            ".mobile-menu-overlay"
-          );
-
-        if (overlay) {
-          const opacity =
-            Math.max(
-              0,
-              1 -
-                amount /
-                  width
-            );
-
-          overlay.style.opacity =
-            String(
-              opacity
-            );
-        }
-      },
-      {
-        passive:
-          true
-      }
-    );
-
-    /*
-      TOUCH END
-    */
-
-    sidebar.addEventListener(
-      "touchend",
-      () => {
-        if (
-          !mobileMenuTouchActive
-        ) {
-          return;
-        }
-
-        mobileMenuTouchActive =
-          false;
-
-        const deltaX =
-          mobileMenuTouchCurrentX -
-          mobileMenuTouchStartX;
-
-        const deltaY =
-          mobileMenuTouchCurrentY -
-          mobileMenuTouchStartY;
-
-        sidebar.style.transition =
-          "";
-
-        /*
-          Si se deslizó suficientemente
-          hacia la izquierda, cerramos.
-        */
-
-        if (
-          deltaX < -70 &&
-          Math.abs(deltaX) >
-            Math.abs(deltaY)
-        ) {
-          closeMobileMenu();
-
-          return;
-        }
-
-        /*
-          Si el swipe no fue suficiente,
-          regresamos el menú a su posición.
-        */
-
-        sidebar.style.transform =
-          "";
-
-        updateMobileMenuOverlay();
-      },
-      {
-        passive:
-          true
-      }
-    );
-
-    /*
-      TOUCH CANCEL
-    */
-
-    sidebar.addEventListener(
-      "touchcancel",
-      () => {
-        mobileMenuTouchActive =
-          false;
-
-        sidebar.style.transition =
-          "";
-
-        sidebar.style.transform =
-          "";
-
-        updateMobileMenuOverlay();
-      },
-      {
-        passive:
-          true
-      }
-    );
-  }
-
-  function initializeMobileMenu() {
-    if (
-      mobileMenuInitialized
-    ) {
-      return;
-    }
-
-    mobileMenuInitialized =
-      true;
-
-    createMobileMenuOverlay();
-
-    setupMobileMenuTouch();
-
-    updateMobileMenuOverlay();
-
-    /*
-      ESCAPE
-    */
-
-    document.addEventListener(
-      "keydown",
-      event => {
-        if (
-          event.key ===
-          "Escape"
-        ) {
-          const sidebar =
-            getMobileSidebar();
-
-          if (
-            sidebar?.classList.contains(
-              "open"
-            )
-          ) {
-            closeMobileMenu();
-          }
-        }
-      }
-    );
-
-    /*
-      Si la ventana cambia de tamaño,
-      eliminamos cualquier estado extraño
-      del drawer.
-    */
-
-    window.addEventListener(
-      "resize",
-      () => {
-        const sidebar =
-          getMobileSidebar();
-
-        if (!sidebar) {
-          return;
-        }
-
-        /*
-          Si el navegador vuelve a desktop,
-          no queremos dejar el overlay bloqueando
-          la página.
-        */
-
-        if (
-          !window.matchMedia(
-            "(max-width: 900px)"
-          ).matches
-        ) {
-          closeMobileMenu();
-        }
-      }
-    );
-  }
-
-  /* =======================================================
-     GROUPS
-     ======================================================= */
-
+  /* ---------------- GROUPS ---------------- */
   async function loadGroups() {
-    if (
-      !onlineMode ||
-      !currentUser ||
-      !supabaseClient
-    ) {
+    if (!supabaseClient || !currentUser || !onlineMode) {
+      loadCachedCurrentGroup();
       return;
     }
-
-    const {
-      data: groups,
-      error
-    } =
-      await supabaseClient
-        .from("groups")
-        .select("*")
-        .order(
-          "created_at",
-          {
-            ascending: false
-          }
-        );
-
+    const { data: memberships, error } = await supabaseClient
+      .from("members")
+      .select("id,group_id,user_id,role,groups(*)")
+      .eq("user_id", currentUser.id)
+      .order("created_at", { ascending: false });
     if (error) {
-      console.error(
-        "Groups:",
-        error
-      );
-
+      console.error("Groups:", error);
+      loadCachedCurrentGroup();
+      toast(translateError(error.message));
       return;
     }
-
-    if (!groups?.length) {
-      currentGroup = null;
-
-      data.members = [];
-
-      return;
-    }
-
-    const savedId =
-      localStorage.getItem(
-        STORAGE_GROUP
-      );
-
-    currentGroup =
-      groups.find(
-        g =>
-          g.id === savedId
-      ) ||
-      groups[0];
-
-    localStorage.setItem(
-      STORAGE_GROUP,
-      currentGroup.id
-    );
-
+    groups = (memberships || []).map(m => ({ ...m.groups, my_role: m.role })).filter(Boolean);
+    const savedId = localStorage.getItem(STORAGE.currentGroup);
+    const next = groups.find(g => g.id === savedId) || groups[0] || null;
+    currentGroup = next;
+    if (currentGroup) localStorage.setItem(STORAGE.currentGroup, currentGroup.id);
+    else localStorage.removeItem(STORAGE.currentGroup);
+    renderTripMenu();
     await loadGroupData();
   }
 
   async function createGroup() {
-    if (!currentUser) {
-      toast(
-        "Primero inicia sesión."
-      );
-
-      return;
-    }
-
-    const name =
-      prompt(
-        "Nombre del viaje:"
-      );
-
+    if (!currentUser || !supabaseClient) return toast("Inicia sesión para crear un viaje compartido.");
+    const name = prompt("Nombre del viaje:", "Nuestra Aventura")?.trim();
     if (!name) return;
-
-    if (!onlineMode) {
-      currentGroup = {
-        id:
-          crypto.randomUUID(),
-
-        name,
-
-        destination: "",
-
-        invite_code:
-          generateInviteCode()
-      };
-
-      data.members = [
-        {
-          id:
-            crypto.randomUUID(),
-
-          user_id:
-            currentUser.id,
-
-          role:
-            "owner",
-
-          name:
-            currentUser
-              .user_metadata
-              ?.name ||
-            "Yo"
-        }
-      ];
-
-      saveOfflineData();
-
-      toast(
-        "Viaje creado."
-      );
-
-      renderAll();
-
-      return;
-    }
-
-    const destination =
-      prompt(
-        "Destino:"
-      ) || "";
-
-    const invite_code =
-      generateInviteCode();
-
-    const {
-      data: group,
-      error
-    } =
-      await supabaseClient
-        .from("groups")
-        .insert({
-          name,
-          destination,
-          invite_code,
-          owner_id:
-            currentUser.id
-        })
-        .select()
-        .single();
-
-    if (error) {
-      toast(
-        translateError(
-          error.message
-        )
-      );
-
-      return;
-    }
-
-    const {
-      error: memberError
-    } =
-      await supabaseClient
-        .from("members")
-        .insert({
-          group_id:
-            group.id,
-
-          user_id:
-            currentUser.id,
-
-          role:
-            "owner"
-        });
-
-    if (memberError) {
-      toast(
-        translateError(
-          memberError.message
-        )
-      );
-
-      return;
-    }
-
-    currentGroup =
-      group;
-
-    localStorage.setItem(
-      STORAGE_GROUP,
-      group.id
-    );
-
-    await loadGroupData();
-
-    toast(
-      "Viaje creado."
-    );
-
-    renderAll();
+    const destination = prompt("Destino:", "Blowing Rock, NC")?.trim() || "";
+    const start = prompt("Fecha de inicio (YYYY-MM-DD):", "2026-10-02")?.trim() || null;
+    const end = prompt("Fecha de fin (YYYY-MM-DD):", "2026-10-08")?.trim() || null;
+    const invite = generateInviteCode();
+    const { data: g, error } = await supabaseClient.from("groups").insert({
+      name, destination, start_date: start || null, end_date: end || null,
+      invite_code: invite, owner_id: currentUser.id
+    }).select().single();
+    if (error) return toast(translateError(error.message));
+    const { error: memberError } = await supabaseClient.from("members").insert({ group_id: g.id, user_id: currentUser.id, role: "owner" });
+    if (memberError) return toast(translateError(memberError.message));
+    await loadGroups();
+    await selectGroup(g.id);
+    toast(`Viaje creado · código ${invite}`);
   }
 
   async function joinGroup() {
-    const code =
-      prompt(
-        "Escribe el código de invitación:"
-      )
-        ?.trim()
-        .toUpperCase();
-
+    if (!currentUser || !supabaseClient) return toast("Inicia sesión para unirte a un viaje.");
+    const code = prompt("Código de invitación:")?.trim().toUpperCase();
     if (!code) return;
+    if (!navigator.onLine) return toast("Necesitas conexión para unirte a un viaje compartido.");
+    const { data: g, error } = await supabaseClient.rpc("join_group_by_invite", { p_invite_code: code });
+    if (error) return toast(translateError(error.message));
+    if (!g) return toast("No encontré ese código.");
+    await loadGroups();
+    await selectGroup(g.id);
+    toast("Te uniste al viaje.");
+  }
 
-    if (!onlineMode) {
-      toast(
-        "Para unirte a un grupo compartido necesitas conexión."
-      );
-
-      return;
-    }
-
-    const {
-      data: group,
-      error
-    } =
-      await supabaseClient
-        .from("groups")
-        .select("*")
-        .eq(
-          "invite_code",
-          code
-        )
-        .maybeSingle();
-
-    if (error) {
-      toast(
-        translateError(
-          error.message
-        )
-      );
-
-      return;
-    }
-
-    if (!group) {
-      toast(
-        "No encontré ese código."
-      );
-
-      return;
-    }
-
-    const {
-      error: memberError
-    } =
-      await supabaseClient
-        .from("members")
-        .insert({
-          group_id:
-            group.id,
-
-          user_id:
-            currentUser.id,
-
-          role:
-            "adult"
-        });
-
-    if (memberError) {
-      if (
-        /duplicate/i.test(
-          memberError.message
-        )
-      ) {
-        toast(
-          "Ya perteneces a este grupo."
-        );
-      } else {
-        toast(
-          translateError(
-            memberError.message
-          )
-        );
-      }
-
-      return;
-    }
-
-    currentGroup =
-      group;
-
-    localStorage.setItem(
-      STORAGE_GROUP,
-      group.id
-    );
-
+  async function selectGroup(id) {
+    const g = groups.find(x => x.id === id);
+    if (!g) return;
+    currentGroup = g;
+    localStorage.setItem(STORAGE.currentGroup, id);
+    closeTripMenu();
     await loadGroupData();
-
-    toast(
-      "Te uniste al grupo."
-    );
-
     renderAll();
+    toast(`Viaje activo: ${g.name}`);
   }
 
-  /* =======================================================
-     INVITE FAMILY
-     ======================================================= */
-
-  async function inviteFamily() {
-    if (!currentGroup) {
-      toast(
-        "Primero crea o selecciona un viaje."
-      );
-
-      return;
-    }
-
-    const code =
-      currentGroup.invite_code ||
-      "";
-
-    if (!code) {
-      toast(
-        "Este viaje no tiene código de invitación."
-      );
-
-      return;
-    }
-
-    const destination =
-      currentGroup.destination
-        ? ` · ${currentGroup.destination}`
-        : "";
-
-    const message =
-      `¡Únete a nuestro viaje en Nuestra Aventura! ✈️\n\n` +
-      `${currentGroup.name}${destination}\n\n` +
-      `Código de invitación: ${code}\n\n` +
-      `Abre la app:\n${BUILTIN_CONFIG.SITE_URL}\n\n` +
-      `Crea tu cuenta y usa el código para unirte al grupo.`;
-
-    if (
-      navigator.share &&
-      typeof navigator.share ===
-        "function"
-    ) {
-      try {
-        await navigator.share({
-          title:
-            "Nuestra Aventura · Invitación",
-
-          text:
-            message,
-
-          url:
-            BUILTIN_CONFIG.SITE_URL
-        });
-
-        return;
-      } catch (error) {
-        if (
-          error?.name ===
-          "AbortError"
-        ) {
-          return;
-        }
-      }
-    }
-
-    try {
-      await navigator.clipboard.writeText(
-        message
-      );
-
-      toast(
-        "Invitación copiada. Ahora puedes pegarla en WhatsApp."
-      );
-
-      return;
-    } catch (_) {}
-
-    prompt(
-      "Copia esta invitación:",
-      message
-    );
+  function renderTripMenu() {
+    $("#sidebarTripName").textContent = currentGroup?.name || "Sin viaje";
+    const menu = $("#tripMenu");
+    if (!menu) return;
+    menu.innerHTML = groups.map(g => `<button class="trip-option ${g.id === currentGroup?.id ? "active" : ""}" data-select-trip="${esc(g.id)}"><strong>${esc(g.name)}</strong><small>${esc(g.destination || "Sin destino")}</small></button>`).join("") || `<div class="trip-option"><small>No hay viajes todavía.</small></div>`;
   }
 
-  async function copyInviteCode() {
-    if (!currentGroup?.invite_code) {
-      toast(
-        "No hay código de invitación."
-      );
-
-      return;
-    }
-
-    const code =
-      currentGroup.invite_code;
-
-    try {
-      await navigator.clipboard.writeText(
-        code
-      );
-
-      toast(
-        `Código ${code} copiado.`
-      );
-
-      return;
-    } catch (_) {}
-
-    prompt(
-      "Copia este código:",
-      code
-    );
-  }
-
-  /* =======================================================
-     GROUP DATA
-     ======================================================= */
+  function toggleTripMenu() { $("#tripMenu")?.classList.toggle("hidden"); renderTripMenu(); }
+  function closeTripMenu() { $("#tripMenu")?.classList.add("hidden"); }
 
   async function loadGroupData() {
     if (!currentGroup) {
+      data = emptyData();
       renderAll();
-
       return;
     }
-
-    if (!onlineMode) {
-      saveOfflineData();
-
+    if (!onlineMode || !supabaseClient || currentGroup.id === "offline-trip") {
+      loadCachedDataForCurrentGroup();
       renderAll();
-
       return;
     }
-
-    const gid =
-      currentGroup.id;
-
-    const [
-      events,
-      packing,
-      places,
-      food,
-      activities,
-      messages,
-      members,
-      locations,
-      parking,
-      status
-    ] =
-      await Promise.all([
-        fetchTable(
-          "events",
-          gid
-        ),
-
-        fetchTable(
-          "packing",
-          gid
-        ),
-
-        fetchTable(
-          "places",
-          gid
-        ),
-
-        fetchTable(
-          "food",
-          gid
-        ),
-
-        fetchTable(
-          "activities",
-          gid
-        ),
-
-        fetchTable(
-          "messages",
-          gid
-        ),
-
-        fetchTable(
-          "members",
-          gid
-        ),
-
-        fetchTable(
-          "locations",
-          gid
-        ),
-
-        fetchSingle(
-          "parking",
-          gid
-        ),
-
-        fetchSingle(
-          "travel_status",
-          gid
-        )
-      ]);
-
-    data.events =
-      events;
-
-    data.packing =
-      packing;
-
-    data.places =
-      places;
-
-    data.food =
-      food;
-
-    data.activities =
-      activities;
-
-    data.messages =
-      messages;
-
-    data.members =
-      members;
-
-    data.locations =
-      locations;
-
-    data.parking =
-      parking;
-
-    data.travel_status =
-      status;
-
+    const gid = currentGroup.id;
+    const results = await Promise.all([
+      fetchRows("events", gid, "date,time,created_at"),
+      fetchRows("packing", gid, "created_at"),
+      fetchRows("places", gid, "created_at"),
+      fetchRows("food", gid, "created_at"),
+      fetchRows("activities", gid, "created_at"),
+      fetchRows("messages", gid, "created_at"),
+      fetchRows("members", gid, "created_at"),
+      fetchRows("locations", gid, "updated_at"),
+      fetchSingle("parking", gid),
+      fetchSingle("travel_status", gid)
+    ]);
+    data.events = results[0]; data.packing = results[1]; data.places = results[2]; data.food = results[3];
+    data.activities = results[4]; data.messages = results[5]; data.members = results[6]; data.locations = results[7];
+    data.parking = results[8]; data.travel_status = results[9] || { group_id: gid, tsa:false, boarding:false, landed:false, bags:false };
     await loadProfiles();
-
+    cacheCurrentGroup();
     setupRealtime();
-
     renderAll();
   }
 
-  async function fetchTable(
-    table,
-    gid
-  ) {
-    const {
-      data: rows,
-      error
-    } =
-      await supabaseClient
-        .from(table)
-        .select("*")
-        .eq(
-          "group_id",
-          gid
-        )
-        .order(
-          "created_at",
-          {
-            ascending: true
-          }
-        );
-
-    if (error) {
-      console.error(
-        table,
-        error
-      );
-
-      return [];
-    }
-
+  async function fetchRows(table, gid, order = "created_at") {
+    const { data: rows, error } = await supabaseClient.from(table).select("*").eq("group_id", gid).order(order.split(",")[0], { ascending:true });
+    if (error) { console.warn(table, error.message); return []; }
     return rows || [];
   }
-
-  async function fetchSingle(
-    table,
-    gid
-  ) {
-    const {
-      data: row,
-      error
-    } =
-      await supabaseClient
-        .from(table)
-        .select("*")
-        .eq(
-          "group_id",
-          gid
-        )
-        .maybeSingle();
-
-    if (error) {
-      console.error(
-        table,
-        error
-      );
-
-      return null;
-    }
-
+  async function fetchSingle(table, gid) {
+    const { data: row, error } = await supabaseClient.from(table).select("*").eq("group_id", gid).maybeSingle();
+    if (error) { console.warn(table, error.message); return null; }
     return row;
   }
-
   async function loadProfiles() {
-    if (
-      !onlineMode ||
-      !data.members.length
-    ) {
-      return;
-    }
-
-    const ids =
-      data.members
-        .map(
-          m =>
-            m.user_id
-        )
-        .filter(Boolean);
-
-    if (!ids.length) {
-      data.profiles = [];
-
-      return;
-    }
-
-    const {
-      data: profiles
-    } =
-      await supabaseClient
-        .from("profiles")
-        .select("*")
-        .in(
-          "id",
-          ids
-        );
-
-    data.profiles =
-      profiles || [];
+    const ids = data.members.map(m => m.user_id).filter(Boolean);
+    if (!ids.length || !supabaseClient) { data.profiles = []; return; }
+    const { data: profiles } = await supabaseClient.from("profiles").select("*").in("id", ids);
+    data.profiles = profiles || [];
   }
 
-  /* =======================================================
-     GENERIC CRUD
-     ======================================================= */
-
-  async function insertRecord(
-    table,
-    values
-  ) {
-    if (!currentGroup) {
-      toast(
-        "Primero crea o selecciona un viaje."
-      );
-
-      return null;
+  /* ---------------- CRUD ---------------- */
+  async function insertRecord(table, values) {
+    if (!currentGroup) return toast("Primero crea o selecciona un viaje.");
+    if (!onlineMode || !supabaseClient || currentGroup.id === "offline-trip") {
+      const row = { id: crypto.randomUUID(), group_id: currentGroup.id, created_at:new Date().toISOString(), ...values };
+      if (!Array.isArray(data[table])) data[table] = [];
+      data[table].push(row); saveCachedData(); renderAll(); return row;
     }
-
-    if (!onlineMode) {
-      const record = {
-        id:
-          crypto.randomUUID(),
-
-        group_id:
-          currentGroup.id,
-
-        created_at:
-          new Date().toISOString(),
-
-        ...values
-      };
-
-      if (!Array.isArray(data[table])) {
-        data[table] = [];
-      }
-
-      data[table].push(
-        record
-      );
-
-      saveOfflineData();
-
-      renderAll();
-
-      return record;
-    }
-
-    const {
-      data: record,
-      error
-    } =
-      await supabaseClient
-        .from(table)
-        .insert({
-          group_id:
-            currentGroup.id,
-
-          ...values
-        })
-        .select()
-        .single();
-
-    if (error) {
-      toast(
-        translateError(
-          error.message
-        )
-      );
-
-      return null;
-    }
-
-    if (!Array.isArray(data[table])) {
-      data[table] = [];
-    }
-
-    data[table].push(
-      record
-    );
-
-    renderAll();
-
-    return record;
+    const { data: row, error } = await supabaseClient.from(table).insert({ group_id: currentGroup.id, ...values }).select().single();
+    if (error) { toast(translateError(error.message)); return null; }
+    data[table].push(row); renderAll(); return row;
   }
 
-  async function updateRecord(
-    table,
-    id,
-    values
-  ) {
-    if (!onlineMode) {
-      const list =
-        data[table];
-
-      const index =
-        list.findIndex(
-          x =>
-            x.id === id
-        );
-
-      if (index >= 0) {
-        list[index] = {
-          ...list[index],
-          ...values
-        };
-
-        saveOfflineData();
-
-        renderAll();
-      }
-
+  async function updateRecord(table, id, values) {
+    if (!currentGroup) return;
+    if (!onlineMode || !supabaseClient || currentGroup.id === "offline-trip") {
+      const list = data[table] || []; const i = list.findIndex(x => x.id === id);
+      if (i >= 0) { list[i] = {...list[i], ...values}; saveCachedData(); renderAll(); }
       return;
     }
-
-    const {
-      data: record,
-      error
-    } =
-      await supabaseClient
-        .from(table)
-        .update(values)
-        .eq(
-          "id",
-          id
-        )
-        .select()
-        .single();
-
-    if (error) {
-      toast(
-        translateError(
-          error.message
-        )
-      );
-
-      return;
-    }
-
-    const index =
-      data[table].findIndex(
-        x =>
-          x.id === id
-      );
-
-    if (index >= 0) {
-      data[table][index] =
-        record;
-    }
-
+    const { data: row, error } = await supabaseClient.from(table).update(values).eq("id", id).select().single();
+    if (error) { toast(translateError(error.message)); return; }
+    const i = data[table].findIndex(x => x.id === id); if (i >= 0) data[table][i] = row;
     renderAll();
   }
 
-  async function deleteRecord(
-    table,
-    id
-  ) {
-    if (
-      !confirm(
-        "¿Eliminar este elemento?"
-      )
-    ) {
-      return;
+  async function deleteRecord(table, id) {
+    if (!confirm("¿Eliminar este elemento?")) return;
+    if (!onlineMode || !supabaseClient || currentGroup?.id === "offline-trip") {
+      data[table] = (data[table] || []).filter(x => x.id !== id); saveCachedData(); renderAll(); return;
     }
-
-    if (!onlineMode) {
-      data[table] =
-        data[table].filter(
-          x =>
-            x.id !== id
-        );
-
-      saveOfflineData();
-
-      renderAll();
-
-      return;
-    }
-
-    const {
-      error
-    } =
-      await supabaseClient
-        .from(table)
-        .delete()
-        .eq(
-          "id",
-          id
-        );
-
-    if (error) {
-      toast(
-        translateError(
-          error.message
-        )
-      );
-
-      return;
-    }
-
-    data[table] =
-      data[table].filter(
-        x =>
-          x.id !== id
-      );
-
-    renderAll();
+    const { error } = await supabaseClient.from(table).delete().eq("id", id);
+    if (error) return toast(translateError(error.message));
+    data[table] = data[table].filter(x => x.id !== id); renderAll();
   }
 
-  /* =======================================================
-     EVENTS
-     ======================================================= */
+  /* ---------------- MODALS ---------------- */
+  function openModal(title, fields, callback) {
+    $("#modalTitle").textContent = title;
+    $("#modalFields").innerHTML = fields.join("");
+    modalSave = callback;
+    $("#modal").classList.remove("hidden");
+    setTimeout(() => $("#modalFields input, #modalFields textarea")?.focus(), 20);
+  }
+  function closeModal() { $("#modal")?.classList.add("hidden"); $("#modalFields").innerHTML=""; modalSave=null; }
+  $("#modalForm")?.addEventListener("submit", async e => {
+    e.preventDefault(); if (!modalSave) return;
+    const values = {};
+    $$("[data-field]", $("#modalFields")).forEach(el => {
+      values[el.dataset.field] = el.type === "checkbox" ? el.checked : el.value.trim();
+    });
+    await modalSave(values); closeModal();
+  });
+  $("#modalClose")?.addEventListener("click", closeModal);
+  $("#modalCancel")?.addEventListener("click", closeModal);
+  $("#modalBackdrop")?.addEventListener("click", closeModal);
 
-  function openEventModal(
-    item = null
-  ) {
-    openModal(
-      item
-        ? "Editar evento"
-        : "Añadir evento",
-
-      [
-        field(
-          "title",
-          "Título",
-          item?.title || "",
-          true
-        ),
-
-        field(
-          "date",
-          "Fecha",
-          item?.date || "",
-          false,
-          "date"
-        ),
-
-        field(
-          "time",
-          "Hora",
-          item?.time || "",
-          false,
-          "time"
-        ),
-
-        field(
-          "tag",
-          "Categoría",
-          item?.tag ||
-            "CUSTOM"
-        ),
-
-        field(
-          "description",
-          "Descripción",
-          item?.description ||
-            "",
-          false,
-          "textarea"
-        )
-      ],
-
-      async values => {
-        if (item) {
-          await updateRecord(
-            "events",
-            item.id,
-            values
-          );
-        } else {
-          await insertRecord(
-            "events",
-            values
-          );
-        }
-
-        closeModal();
-      }
-    );
+  function inputField(name,label,value="",type="text",required=false) {
+    return `<div class="modal-field"><label>${esc(label)}<input data-field="${esc(name)}" type="${esc(type)}" value="${esc(value)}" ${required?"required":""}></label></div>`;
+  }
+  function textField(name,label,value="") {
+    return `<div class="modal-field"><label>${esc(label)}<textarea data-field="${esc(name)}" rows="3">${esc(value)}</textarea></label></div>`;
+  }
+  function checkField(name,label,value=false) {
+    return `<label class="modal-check"><input data-field="${esc(name)}" type="checkbox" ${value?"checked":""}><span>${esc(label)}</span></label>`;
   }
 
-  /* =======================================================
-     PACKING
-     ======================================================= */
+  function openEventModal(item=null) {
+    openModal(item?"Editar evento":"Añadir evento", [
+      inputField("title","Título",item?.title||"","text",true),
+      inputField("date","Fecha",item?.date||currentGroup?.start_date||"","date"),
+      inputField("time","Hora",item?.time||"","time"),
+      inputField("day","Día / bloque",item?.day||"Día 1"),
+      inputField("departure_time","Salida sugerida",item?.departure_time||"","time"),
+      inputField("arrival_time","Llegada estimada",item?.arrival_time||"","time"),
+      inputField("duration_minutes","Tiempo en el lugar (min)",item?.duration_minutes||"","number"),
+      inputField("drive_minutes","Manejo desde parada anterior (min)",item?.drive_minutes||"","number"),
+      inputField("location","Ubicación",item?.location||""),
+      inputField("maps_url","Google Maps URL",item?.maps_url||""),
+      inputField("tag","Categoría",item?.tag||"CUSTOM"),
+      checkField("family_friendly","Family-friendly",item?.family_friendly!==false),
+      checkField("baby_friendly","Baby-friendly",!!item?.baby_friendly),
+      checkField("stroller","Stroller / acceso fácil",!!item?.stroller),
+      inputField("parking","Parking",item?.parking||""),
+      inputField("restrooms","Baños",item?.restrooms||""),
+      inputField("wear","Qué ponerse",item?.wear||""),
+      textField("description","Notas",item?.description||"")
+    ], async values => item ? updateRecord("events",item.id,values) : insertRecord("events",values));
+  }
 
   async function addPacking() {
-    const name =
-      prompt(
-        "¿Qué necesitas llevar?"
-      );
-
-    if (!name) return;
-
-    await insertRecord(
-      "packing",
-      {
-        name,
-        done: false
-      }
-    );
+    const name = prompt("¿Qué necesitas llevar?")?.trim(); if (!name) return;
+    await insertRecord("packing", {name,done:false});
   }
 
-  async function togglePacking(
-    item
-  ) {
-    await updateRecord(
-      "packing",
-      item.id,
-      {
-        done:
-          !item.done
-      }
-    );
+  function openPlaceModal(item=null) {
+    openModal(item?"Editar lugar":"Añadir lugar", [
+      inputField("name","Nombre",item?.name||"","text",true), inputField("category","Categoría",item?.category||"FAMILY"),
+      inputField("maps_url","Google Maps URL",item?.maps_url||""), inputField("rating","Rating",item?.rating||"","number"), inputField("review_count","Cantidad de reviews",item?.review_count||"","number"),
+      checkField("family_friendly","Family-friendly",item?.family_friendly!==false), checkField("baby_friendly","Baby-friendly",!!item?.baby_friendly), checkField("stroller","Stroller / acceso fácil",!!item?.stroller),
+      inputField("parking","Parking",item?.parking||""), inputField("restrooms","Baños",item?.restrooms||""), textField("description","Descripción",item?.description||"")
+    ], async values => item ? updateRecord("places",item.id,values) : insertRecord("places",values));
+  }
+  function openFoodModal(item=null) {
+    openModal(item?"Editar comida":"Añadir comida", [inputField("name","Nombre",item?.name||"","text",true),inputField("category","Categoría",item?.category||"QUICK BITE"),inputField("maps_url","Google Maps URL",item?.maps_url||""),inputField("rating","Rating",item?.rating||"","number"),inputField("review_count","Reviews",item?.review_count||"","number"),textField("description","Notas",item?.description||"")], async values=>item?updateRecord("food",item.id,values):insertRecord("food",values));
+  }
+  function openActivityModal(item=null) {
+    openModal(item?"Editar actividad":"Añadir actividad", [inputField("name","Nombre",item?.name||"","text",true),inputField("category","Categoría",item?.category||"FAMILY"),inputField("maps_url","Google Maps URL",item?.maps_url||""),inputField("duration_minutes","Duración (min)",item?.duration_minutes||"","number"),checkField("family_friendly","Family-friendly",item?.family_friendly!==false),checkField("baby_friendly","Baby-friendly",!!item?.baby_friendly),checkField("stroller","Stroller / acceso fácil",!!item?.stroller),textField("description","Descripción",item?.description||"")], async values=>item?updateRecord("activities",item.id,values):insertRecord("activities",values));
   }
 
-  /* =======================================================
-     PLACES
-     ======================================================= */
-
-  function openPlaceModal(
-    item = null
-  ) {
-    openModal(
-      item
-        ? "Editar lugar"
-        : "Añadir lugar",
-
-      [
-        field(
-          "name",
-          "Nombre",
-          item?.name || "",
-          true
-        ),
-
-        field(
-          "category",
-          "Categoría",
-          item?.category ||
-            "FAMILY"
-        ),
-
-        field(
-          "description",
-          "Descripción",
-          item?.description ||
-            "",
-          false,
-          "textarea"
-        )
-      ],
-
-      async values => {
-        if (item) {
-          await updateRecord(
-            "places",
-            item.id,
-            values
-          );
-        } else {
-          await insertRecord(
-            "places",
-            values
-          );
-        }
-
-        closeModal();
-      }
-    );
-  }
-
-  /* =======================================================
-     FOOD
-     ======================================================= */
-
-  function openFoodModal(
-    item = null
-  ) {
-    openModal(
-      item
-        ? "Editar comida"
-        : "Añadir comida",
-
-      [
-        field(
-          "name",
-          "Nombre",
-          item?.name || "",
-          true
-        ),
-
-        field(
-          "category",
-          "Categoría",
-          item?.category ||
-            "FOOD"
-        ),
-
-        field(
-          "description",
-          "Descripción",
-          item?.description ||
-            "",
-          false,
-          "textarea"
-        )
-      ],
-
-      async values => {
-        if (item) {
-          await updateRecord(
-            "food",
-            item.id,
-            values
-          );
-        } else {
-          await insertRecord(
-            "food",
-            values
-          );
-        }
-
-        closeModal();
-      }
-    );
-  }
-
-  /* =======================================================
-     ACTIVITIES
-     ======================================================= */
-
-  function openActivityModal(
-    item = null
-  ) {
-    openModal(
-      item
-        ? "Editar actividad"
-        : "Añadir actividad",
-
-      [
-        field(
-          "name",
-          "Nombre",
-          item?.name || "",
-          true
-        ),
-
-        field(
-          "category",
-          "Categoría",
-          item?.category ||
-            "FAMILY"
-        ),
-
-        field(
-          "description",
-          "Descripción",
-          item?.description ||
-            "",
-          false,
-          "textarea"
-        )
-      ],
-
-      async values => {
-        if (item) {
-          await updateRecord(
-            "activities",
-            item.id,
-            values
-          );
-        } else {
-          await insertRecord(
-            "activities",
-            values
-          );
-        }
-
-        closeModal();
-      }
-    );
-  }
-
-  /* =======================================================
-     MESSAGES
-     ======================================================= */
-
-  async function sendMessage(
-    event
-  ) {
-    event.preventDefault();
-
-    const input =
-      $("messageInput");
-
-    const body =
-      input?.value.trim() || "";
-
-    if (!body) return;
-
-    if (!currentGroup) {
-      toast(
-        "Primero crea un viaje."
-      );
-
-      return;
-    }
-
-    if (!onlineMode) {
-      data.messages.push({
-        id:
-          crypto.randomUUID(),
-
-        group_id:
-          currentGroup.id,
-
-        user_id:
-          currentUser.id,
-
-        body,
-
-        created_at:
-          new Date().toISOString()
-      });
-
-      saveOfflineData();
-
-      input.value = "";
-
-      renderMessages();
-
-      return;
-    }
-
-    const {
-      data: message,
-      error
-    } =
-      await supabaseClient
-        .from("messages")
-        .insert({
-          group_id:
-            currentGroup.id,
-
-          user_id:
-            currentUser.id,
-
-          body
-        })
-        .select()
-        .single();
-
-    if (error) {
-      toast(
-        translateError(
-          error.message
-        )
-      );
-
-      return;
-    }
-
-    data.messages.push(
-      message
-    );
-
-    input.value = "";
-
-    renderMessages();
-  }
-
-  /* =======================================================
-     LOCATION
-     ======================================================= */
-
-  function getCurrentPosition() {
-    return new Promise(
-      (
-        resolve,
-        reject
-      ) => {
-        if (
-          !navigator.geolocation
-        ) {
-          reject(
-            new Error(
-              "Este navegador no permite ubicación."
-            )
-          );
-
-          return;
-        }
-
-        navigator.geolocation.getCurrentPosition(
-          resolve,
-          reject,
-          {
-            enableHighAccuracy:
-              true,
-
-            timeout:
-              15000,
-
-            maximumAge:
-              10000
-          }
-        );
-      }
-    );
-  }
-
-  async function shareLocation() {
-    try {
-      const position =
-        await getCurrentPosition();
-
-      const lat =
-        position.coords
-          .latitude;
-
-      const lon =
-        position.coords
-          .longitude;
-
-      if (!currentGroup) {
-        toast(
-          "Primero crea un viaje."
-        );
-
-        return;
-      }
-
-      if (!onlineMode) {
-        data.locations =
-          data.locations.filter(
-            x =>
-              x.user_id !==
-              currentUser.id
-          );
-
-        data.locations.push({
-          id:
-            crypto.randomUUID(),
-
-          group_id:
-            currentGroup.id,
-
-          user_id:
-            currentUser.id,
-
-          lat,
-
-          lon,
-
-          name:
-            "Mi ubicación",
-
-          updated_at:
-            new Date().toISOString()
-        });
-
-        saveOfflineData();
-      } else {
-        const {
-          error
-        } =
-          await supabaseClient
-            .from("locations")
-            .upsert(
-              {
-                group_id:
-                  currentGroup.id,
-
-                user_id:
-                  currentUser.id,
-
-                lat,
-
-                lon,
-
-                name:
-                  "Mi ubicación",
-
-                updated_at:
-                  new Date().toISOString()
-              },
-              {
-                onConflict:
-                  "group_id,user_id"
-              }
-            );
-
-        if (error) {
-          toast(
-            translateError(
-              error.message
-            )
-          );
-
-          return;
-        }
-
-        await loadGroupData();
-      }
-
-      if ($("myLocationStatus")) {
-        $("myLocationStatus")
-          .textContent =
-            `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-      }
-
-      toast(
-        "Ubicación guardada."
-      );
-    } catch (error) {
-      console.error(
-        "Location:",
-        error
-      );
-
-      toast(
-        "No pude obtener tu ubicación. Revisa el permiso del navegador."
-      );
-    }
-  }
-
-  async function saveParking() {
-    try {
-      const position =
-        await getCurrentPosition();
-
-      const lat =
-        position.coords
-          .latitude;
-
-      const lon =
-        position.coords
-          .longitude;
-
-      if (!currentGroup) {
-        toast(
-          "Primero crea un viaje."
-        );
-
-        return;
-      }
-
-      if (!onlineMode) {
-        data.parking = {
-          group_id:
-            currentGroup.id,
-
-          user_id:
-            currentUser.id,
-
-          lat,
-
-          lon,
-
-          updated_at:
-            new Date().toISOString()
-        };
-
-        saveOfflineData();
-      } else {
-        const {
-          error
-        } =
-          await supabaseClient
-            .from("parking")
-            .upsert(
-              {
-                group_id:
-                  currentGroup.id,
-
-                user_id:
-                  currentUser.id,
-
-                lat,
-
-                lon,
-
-                updated_at:
-                  new Date().toISOString()
-              },
-              {
-                onConflict:
-                  "group_id"
-              }
-            );
-
-        if (error) {
-          toast(
-            translateError(
-              error.message
-            )
-          );
-
-          return;
-        }
-
-        data.parking =
-          await fetchSingle(
-            "parking",
-            currentGroup.id
-          );
-      }
-
-      if ($("parkingStatus")) {
-        $("parkingStatus")
-          .textContent =
-            `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-      }
-
-      toast(
-        "Parking guardado."
-      );
-    } catch (_) {
-      toast(
-        "No pude obtener tu ubicación."
-      );
-    }
-  }
-
-  /* =======================================================
-     MEMBERS
-     ======================================================= */
-
-  function openMemberModal() {
-    if (!currentGroup) {
-      toast(
-        "Primero crea un viaje."
-      );
-
-      return;
-    }
-
-    /*
-      En una cuenta online, las personas reales
-      deben crear su propia cuenta y unirse mediante
-      el código.
-
-      Ya no presentamos un formulario que parece
-      crear una cuenta inexistente.
-    */
-
-    openInviteModal();
-  }
-
-  function openInviteModal() {
-    const code =
-      currentGroup?.invite_code ||
-      "";
-
-    openModal(
-      "Invitar a la familia",
-
-      [
-        `
-          <div class="modal-field">
-
-            <label>
-              Código de invitación
-            </label>
-
-            <div style="
-              display:flex;
-              gap:10px;
-              align-items:center;
-            ">
-
-              <input
-                value="${escapeAttr(code)}"
-                readonly
-                style="
-                  flex:1;
-                  font-weight:700;
-                  letter-spacing:1px;
-                "
-              />
-
-              <button
-                type="button"
-                class="btn secondary"
-                data-copy-invite
-              >
-                Copiar
-              </button>
-
-            </div>
-
-          </div>
-
-          <div class="modal-field">
-
-            <p style="
-              margin:0;
-              line-height:1.6;
-            ">
-              Comparte este código con tu familia.
-              Cada persona crea su propia cuenta,
-              entra a la app y selecciona
-              <strong>Join Trip</strong>.
-            </p>
-
-          </div>
-
-          <div class="modal-field">
-
-            <button
-              type="button"
-              class="btn primary"
-              data-share-invite
-              style="width:100%;"
-            >
-              ✦ Share Invite
-            </button>
-
-          </div>
-        `
-      ],
-
-      async () => {
-        closeModal();
-      }
-    );
-  }
-
-  async function removeMember(
-    member
-  ) {
-    if (!onlineMode) {
-      data.members =
-        data.members.filter(
-          m =>
-            m.id !== member.id
-        );
-
-      saveOfflineData();
-
-      renderAll();
-
-      return;
-    }
-
-    if (
-      member.user_id ===
-      currentUser.id
-    ) {
-      const {
-        error
-      } =
-        await supabaseClient
-          .from("members")
-          .delete()
-          .eq(
-            "id",
-            member.id
-          );
-
-      if (error) {
-        toast(
-          translateError(
-            error.message
-          )
-        );
-
-        return;
-      }
-
-      data.members =
-        data.members.filter(
-          m =>
-            m.id !== member.id
-        );
-
-      renderAll();
-
-      return;
-    }
-
-    if (
-      !confirm(
-        "¿Eliminar esta persona del grupo?"
-      )
-    ) {
-      return;
-    }
-
-    const {
-      error
-    } =
-      await supabaseClient
-        .from("members")
-        .delete()
-        .eq(
-          "id",
-          member.id
-        );
-
-    if (error) {
-      toast(
-        translateError(
-          error.message
-        )
-      );
-
-      return;
-    }
-
-    data.members =
-      data.members.filter(
-        m =>
-          m.id !== member.id
-      );
-
-    renderAll();
-  }
-
-  /* =======================================================
-     MODAL
-     ======================================================= */
-
-  let modalSaveCallback =
-    null;
-
-  function openModal(
-    title,
-    fields,
-    callback
-  ) {
-    if (!$("modalTitle") ||
-        !$("modalFields")) {
-      toast(
-        "No se encontró el componente de ventana."
-      );
-
-      return;
-    }
-
-    $("modalTitle").textContent =
-      title;
-
-    $("modalFields").innerHTML =
-      fields.join("");
-
-    modalSaveCallback =
-      callback;
-
-    show("modal");
-  }
-
-  function closeModal() {
-    hide("modal");
-
-    if ($("modalFields")) {
-      $("modalFields")
-        .innerHTML =
-          "";
-    }
-
-    modalSaveCallback =
-      null;
-  }
-
-  function field(
-    name,
-    label,
-    value = "",
-    required = false,
-    type = "text"
-  ) {
-    if (
-      type ===
-      "textarea"
-    ) {
-      return `
-        <div class="modal-field">
-
-          <label for="modal-${escapeAttr(name)}">
-            ${escapeHTML(label)}
-          </label>
-
-          <textarea
-            id="modal-${escapeAttr(name)}"
-            data-field="${escapeAttr(name)}"
-            rows="4"
-          >${escapeHTML(value)}</textarea>
-
-        </div>
-      `;
-    }
-
-    return `
-      <div class="modal-field">
-
-        <label for="modal-${escapeAttr(name)}">
-          ${escapeHTML(label)}
-        </label>
-
-        <input
-          id="modal-${escapeAttr(name)}"
-          data-field="${escapeAttr(name)}"
-          type="${escapeAttr(type)}"
-          value="${escapeAttr(value)}"
-          ${required ? "required" : ""}
-        />
-
-      </div>
-    `;
-  }
-
-  async function submitModal(
-    event
-  ) {
-    event.preventDefault();
-
-    if (!modalSaveCallback) {
-      return;
-    }
-
-    /*
-      Los botones especiales de Invite Family
-      no deben intentar guardar el modal.
-    */
-
-    if (
-      event.submitter?.dataset
-        ?.shareInvite ||
-      event.submitter?.dataset
-        ?.copyInvite
-    ) {
-      return;
-    }
-
-    const values = {};
-
-    $("modalFields")
-      .querySelectorAll(
-        "[data-field]"
-      )
-      .forEach(
-        input => {
-          values[
-            input.dataset.field
-          ] =
-            input.value.trim();
-        }
-      );
-
-    await modalSaveCallback(
-      values
-    );
-  }
-
-  /* =======================================================
-     RENDER
-     ======================================================= */
-
+  /* ---------------- RENDER ---------------- */
   function renderAll() {
-    updateHome();
-
-    renderEvents();
-
-    renderPacking();
-
-    renderPlaces();
-
-    renderFood();
-
-    renderActivities();
-
-    renderMessages();
-
-    renderLocations();
-
-    renderGroup();
+    renderTripMenu(); renderHome(); renderItinerary(); renderPacking(); renderPlaces(); renderFood(); renderActivities(); renderChat(); renderMembers(); renderStatuses(); renderSettings(); renderMapMarkers(); renderWear();
+    if (currentGroup) loadWeather();
   }
 
-  function updateHome() {
-    if ($("homeTripName")) {
-      $("homeTripName")
-        .textContent =
-          currentGroup?.name ||
-          "Crea tu primera aventura";
-    }
-
-    if ($("homeDestination")) {
-      $("homeDestination")
-        .textContent =
-          currentGroup?.destination ||
-          "Organiza todo en un solo lugar.";
-    }
-
-    if ($("statEvents")) {
-      $("statEvents")
-        .textContent =
-          data.events.length;
-    }
-
-    const total =
-      data.packing.length;
-
-    const done =
-      data.packing.filter(
-        x =>
-          x.done
-      ).length;
-
-    if ($("statPacking")) {
-      $("statPacking")
-        .textContent =
-          `${done}/${total}`;
-    }
-
-    if ($("statPlaces")) {
-      $("statPlaces")
-        .textContent =
-          data.places.length;
-    }
-
-    if ($("statMembers")) {
-      $("statMembers")
-        .textContent =
-          data.members.length;
-    }
-
-    if ($("homeEvents")) {
-      $("homeEvents")
-        .innerHTML =
-          data.events.length
-            ? data.events
-                .slice(0, 5)
-                .map(
-                  eventMiniHTML
-                )
-                .join("")
-            : emptyHTML(
-                "Todavía no hay eventos."
-              );
-    }
-
-    if ($("homeMembers")) {
-      $("homeMembers")
-        .innerHTML =
-          data.members.length
-            ? data.members
-                .slice(0, 6)
-                .map(
-                  memberHTML
-                )
-                .join("")
-            : emptyHTML(
-                "Todavía no hay personas."
-              );
-    }
+  function renderHome() {
+    const noTrip = !currentGroup;
+    $("#noTripHome")?.classList.toggle("hidden", !noTrip);
+    $("#tripHomeContent")?.classList.toggle("hidden", noTrip);
+    const t=currentGroup||{};
+    $("#tripTitle").textContent=t.name||"Crea tu primer viaje";
+    $("#destination").textContent=t.destination||"—";
+    $("#tripDates").textContent=t.start_date||t.end_date?`${fmt(t.start_date)} — ${fmt(t.end_date)}`:"—";
+    const days = daysUntil(t.start_date); $("#daysLeft").textContent=days===null?"—":days;
+    const total=data.packing.length, done=data.packing.filter(x=>x.done).length, pct=total?Math.round(done/total*100):0;
+    $("#packPct").textContent=`${pct}%`; $("#packSub").textContent=`${done} de ${total}`; $("#tripProgress").style.width=`${pct}%`;
+    $("#familyCount").textContent=data.members.length;
+    $("#nextEvents").innerHTML=data.events.slice().sort(sortEvents).slice(0,5).map(e=>`<div class="timeline-item"><time>${esc(e.time||"—")}</time><i class="timeline-dot"></i><div><strong>${esc(e.title)}</strong><small>${esc(e.location||e.description||"")}</small></div></div>`).join("")||`<p class="muted">No hay eventos todavía.</p>`;
+    $("#weatherMeta").textContent=currentGroup?"Clima del destino":"Clima";
   }
 
-  function renderEvents() {
-    if (!$("eventsList")) {
-      return;
-    }
-
-    $("eventsList")
-      .innerHTML =
-        data.events.length
-          ? data.events
-              .map(
-                eventHTML
-              )
-              .join("")
-          : emptyHTML(
-              "Todavía no tienes eventos. Añade el primero."
-            );
+  function renderItinerary() {
+    const events=data.events.slice().sort(sortEvents); const days=["Todos",...new Set(events.map(e=>e.day||"Sin día"))];
+    if(!days.includes(selectedDay)) selectedDay="Todos";
+    $("#dayFilters").innerHTML=days.map(d=>`<button class="filter ${d===selectedDay?"active":""}" data-day-filter="${esc(d)}">${esc(d)}</button>`).join("");
+    $$('[data-day-filter]').forEach(b=>b.addEventListener("click",()=>{selectedDay=b.dataset.dayFilter;renderItinerary()}));
+    const arr=selectedDay==="Todos"?events:events.filter(e=>(e.day||"Sin día")===selectedDay);
+    $("#itineraryList").innerHTML=arr.map(e=>`<article class="event-card"><div class="event-time"><span>${esc(e.day||"")}</span><strong>${esc(e.time||"Sin hora")}</strong></div><div><div class="event-meta"><span class="tag">${esc(e.tag||"CUSTOM")}</span>${e.drive_minutes?`<span class="tag">${esc(e.drive_minutes)} min drive</span>`:""}${e.duration_minutes?`<span class="tag">${esc(e.duration_minutes)} min</span>`:""}</div><h3>${esc(e.title)}</h3><p>${esc(e.location||e.description||"")}</p><div class="micro-meta">${e.departure_time?`Salida ${esc(e.departure_time)} · `:""}${e.arrival_time?`Llegada ${esc(e.arrival_time)} · `:""}${e.wear?`Qué ponerse: ${esc(e.wear)}`:""}</div></div><div class="card-actions"><button class="edit-btn" data-edit-event="${esc(e.id)}">Editar</button><button class="delete-btn" data-delete-table="events" data-delete-id="${esc(e.id)}">Eliminar</button>${e.maps_url?`<a class="edit-btn" href="${safeUrl(e.maps_url)}" target="_blank" rel="noopener">Mapa</a>`:""}</div></article>`).join("")||`<div class="empty-panel"><h3>No hay eventos</h3><p>Añade el primer evento del viaje.</p></div>`;
   }
 
-  function renderPacking() {
-    if (
-      !$("packingProgressText") ||
-      !$("packingProgressBar") ||
-      !$("packingList")
-    ) {
-      return;
-    }
-
-    const total =
-      data.packing.length;
-
-    const done =
-      data.packing.filter(
-        x =>
-          x.done
-      ).length;
-
-    const percent =
-      total
-        ? Math.round(
-            done /
-              total *
-              100
-          )
-        : 0;
-
-    $("packingProgressText")
-      .textContent =
-        `${percent}%`;
-
-    $("packingProgressBar")
-      .style.width =
-        `${percent}%`;
-
-    $("packingList")
-      .innerHTML =
-        data.packing.length
-          ? data.packing
-              .map(
-                item => `
-                  <div class="check-item ${item.done ? "done" : ""}">
-
-                    <div class="check-main">
-
-                      <input
-                        type="checkbox"
-                        ${item.done ? "checked" : ""}
-                        data-packing-toggle="${item.id}"
-                      />
-
-                      <span class="check-name">
-                        ${escapeHTML(item.name)}
-                      </span>
-
-                    </div>
-
-                    <div class="card-actions">
-
-                      <button
-                        class="delete-btn"
-                        data-delete-table="packing"
-                        data-delete-id="${item.id}"
-                      >
-                        Eliminar
-                      </button>
-
-                    </div>
-
-                  </div>
-                `
-              )
-              .join("")
-          : emptyHTML(
-              "Tu packing list está vacío."
-            );
-  }
-
-  function renderPlaces() {
-    if (!$("placesList")) {
-      return;
-    }
-
-    $("placesList")
-      .innerHTML =
-        data.places.length
-          ? data.places
-              .map(
-                item =>
-                  genericCard(
-                    item,
-                    "places"
-                  )
-              )
-              .join("")
-          : emptyHTML(
-              "Añade lugares que quieran visitar."
-            );
-  }
-
-  function renderFood() {
-    if (!$("foodList")) {
-      return;
-    }
-
-    $("foodList")
-      .innerHTML =
-        data.food.length
-          ? data.food
-              .map(
-                item =>
-                  genericCard(
-                    item,
-                    "food"
-                  )
-              )
-              .join("")
-          : emptyHTML(
-              "Añade restaurantes o comidas."
-            );
-  }
-
-  function renderActivities() {
-    if (!$("activitiesList")) {
-      return;
-    }
-
-    $("activitiesList")
-      .innerHTML =
-        data.activities.length
-          ? data.activities
-              .map(
-                item =>
-                  genericCard(
-                    item,
-                    "activities"
-                  )
-              )
-              .join("")
-          : emptyHTML(
-              "Añade actividades para el viaje."
-            );
-  }
-
-  function renderMessages() {
-    const list =
-      $("messagesList");
-
-    if (!list) {
-      return;
-    }
-
-    list.innerHTML =
-      data.messages.length
-        ? data.messages
-            .map(
-              message => {
-                const mine =
-                  message.user_id ===
-                  currentUser?.id;
-
-                const profile =
-                  data.profiles.find(
-                    p =>
-                      p.id ===
-                      message.user_id
-                  );
-
-                const name =
-                  profile?.name ||
-                  (
-                    mine
-                      ? "Yo"
-                      : "Familia"
-                  );
-
-                return `
-                  <div class="message ${mine ? "mine" : ""}">
-
-                    <div class="message-author">
-                      ${escapeHTML(name)}
-                    </div>
-
-                    <div class="message-body">
-                      ${escapeHTML(message.body)}
-                    </div>
-
-                    <div class="message-time">
-                      ${formatDateTime(
-                        message.created_at
-                      )}
-                    </div>
-
-                  </div>
-                `;
-              }
-            )
-            .join("")
-        : emptyHTML(
-            "Todavía no hay mensajes."
-          );
-  }
-
-  function renderLocations() {
-    const list =
-      $("locationsList");
-
-    if (!list) {
-      return;
-    }
-
-    list.innerHTML =
-      data.locations.length
-        ? data.locations
-            .map(
-              location => {
-                const profile =
-                  data.profiles.find(
-                    p =>
-                      p.id ===
-                      location.user_id
-                  );
-
-                const name =
-                  profile?.name ||
-                  (
-                    location.user_id ===
-                    currentUser?.id
-                      ? "Yo"
-                      : "Familia"
-                  );
-
-                return `
-                  <div class="item-card">
-
-                    <div class="eyebrow">
-                      UBICACIÓN
-                    </div>
-
-                    <h3>
-                      ${escapeHTML(name)}
-                    </h3>
-
-                    <p>
-                      ${Number(location.lat).toFixed(5)},
-                      ${Number(location.lon).toFixed(5)}
-                    </p>
-
-                    <a
-                      class="btn secondary"
-                      target="_blank"
-                      rel="noopener"
-                      href="https://www.google.com/maps?q=${encodeURIComponent(location.lat)},${encodeURIComponent(location.lon)}"
-                    >
-                      Abrir mapa
-                    </a>
-
-                  </div>
-                `;
-              }
-            )
-            .join("")
-        : emptyHTML(
-            "Nadie ha compartido ubicación."
-          );
-  }
-
-  function renderGroup() {
-    if (
-      !$("groupInfo") ||
-      !$("membersList")
-    ) {
-      return;
-    }
-
-    if (!currentGroup) {
-      $("groupInfo")
-        .innerHTML = `
-          <div class="empty-state">
-
-            <strong>
-              No tienes un viaje todavía.
-            </strong>
-
-            <p>
-              Crea uno desde Inicio para comenzar.
-            </p>
-
-          </div>
-        `;
-
-      $("membersList")
-        .innerHTML =
-          "";
-
-      return;
-    }
-
-    const code =
-      currentGroup.invite_code ||
-      "LOCAL";
-
-    $("groupInfo")
-      .innerHTML = `
-        <div class="eyebrow">
-          VIAJE ACTUAL
-        </div>
-
-        <h2>
-          ${escapeHTML(
-            currentGroup.name
-          )}
-        </h2>
-
-        <p>
-          ${escapeHTML(
-            currentGroup.destination ||
-            "Sin destino"
-          )}
-        </p>
-
-        <div class="group-code">
-          Código:
-          <strong>
-            ${escapeHTML(code)}
-          </strong>
-        </div>
-
-        <div
-          class="group-actions"
-          style="
-            display:flex;
-            gap:10px;
-            flex-wrap:wrap;
-            margin-top:16px;
-          "
-        >
-
-          <button
-            type="button"
-            class="btn secondary"
-            data-copy-invite
-          >
-            Copy Code
-          </button>
-
-          <button
-            type="button"
-            class="btn primary"
-            data-share-invite
-          >
-            ✦ Invite Family
-          </button>
-
-        </div>
-      `;
-
-    $("membersList")
-      .innerHTML =
-        data.members.length
-          ? data.members
-              .map(
-                member => `
-                  <div class="item-card">
-
-                    <div class="member-row">
-
-                      <div class="member-avatar">
-                        ${escapeHTML(
-                          (
-                            getMemberName(
-                              member
-                            )
-                              .charAt(0) ||
-                            "?"
-                          ).toUpperCase()
-                        )}
-                      </div>
-
-                      <div class="member-info">
-
-                        <strong>
-                          ${escapeHTML(
-                            getMemberName(
-                              member
-                            )
-                          )}
-                        </strong>
-
-                        <span>
-                          ${escapeHTML(
-                            member.role ||
-                            "adult"
-                          )}
-                        </span>
-
-                      </div>
-
-                      ${
-                        member.user_id !==
-                        currentGroup.owner_id
-                          ? `
-                            <button
-                              class="delete-btn"
-                              data-remove-member="${member.id}"
-                            >
-                              Eliminar
-                            </button>
-                          `
-                          : `
-                            <span class="tag">
-                              OWNER
-                            </span>
-                          `
-                      }
-
-                    </div>
-
-                  </div>
-                `
-              )
-              .join("")
-          : emptyHTML(
-              "Todavía no hay miembros."
-            );
-  }
-
-  /* =======================================================
-     HTML HELPERS
-     ======================================================= */
-
-  function eventMiniHTML(
-    event
-  ) {
-    return `
-      <div class="member-row">
-
-        <div class="member-avatar">
-          ${event.date ? "📅" : "✈"}
-        </div>
-
-        <div class="member-info">
-
-          <strong>
-            ${escapeHTML(
-              event.title
-            )}
-          </strong>
-
-          <span>
-            ${escapeHTML(
-              event.date ||
-              event.time ||
-              ""
-            )}
-          </span>
-
-        </div>
-
-      </div>
-    `;
-  }
-
-  function eventHTML(
-    event
-  ) {
-    return `
-      <div class="item-card">
-
-        <div class="item-meta">
-
-          ${
-            event.date
-              ? `<span class="tag">
-                   ${escapeHTML(event.date)}
-                 </span>`
-              : ""
-          }
-
-          ${
-            event.time
-              ? `<span class="tag">
-                   ${escapeHTML(event.time)}
-                 </span>`
-              : ""
-          }
-
-          <span class="tag">
-            ${escapeHTML(
-              event.tag ||
-              "CUSTOM"
-            )}
-          </span>
-
-        </div>
-
-        <h3>
-          ${escapeHTML(
-            event.title
-          )}
-        </h3>
-
-        <p>
-          ${escapeHTML(
-            event.description ||
-            "Sin descripción."
-          )}
-        </p>
-
-        <div class="card-actions">
-
-          <button
-            class="edit-btn"
-            data-edit-event="${event.id}"
-          >
-            Editar
-          </button>
-
-          <button
-            class="delete-btn"
-            data-delete-table="events"
-            data-delete-id="${event.id}"
-          >
-            Eliminar
-          </button>
-
-        </div>
-
-      </div>
-    `;
-  }
-
-  function genericCard(
-    item,
-    table
-  ) {
-    return `
-      <div class="item-card">
-
-        <div class="item-meta">
-
-          <span class="tag">
-            ${escapeHTML(
-              item.category ||
-              "FAMILY"
-            )}
-          </span>
-
-        </div>
-
-        <h3>
-          ${escapeHTML(
-            item.name
-          )}
-        </h3>
-
-        <p>
-          ${escapeHTML(
-            item.description ||
-            "Sin descripción."
-          )}
-        </p>
-
-        <div class="card-actions">
-
-          <button
-            class="edit-btn"
-            data-edit-table="${table}"
-            data-edit-id="${item.id}"
-          >
-            Editar
-          </button>
-
-          <button
-            class="delete-btn"
-            data-delete-table="${table}"
-            data-delete-id="${item.id}"
-          >
-            Eliminar
-          </button>
-
-        </div>
-
-      </div>
-    `;
-  }
-
-  function memberHTML(
-    member
-  ) {
-    return `
-      <div class="member-row">
-
-        <div class="member-avatar">
-          ${escapeHTML(
-            getMemberName(
-              member
-            )
-              .charAt(0)
-              .toUpperCase()
-          )}
-        </div>
-
-        <div class="member-info">
-
-          <strong>
-            ${escapeHTML(
-              getMemberName(
-                member
-              )
-            )}
-          </strong>
-
-          <span>
-            ${escapeHTML(
-              member.role ||
-              "adult"
-            )}
-          </span>
-
-        </div>
-
-      </div>
-    `;
-  }
-
-  function getMemberName(
-    member
-  ) {
-    if (member.name) {
-      return member.name;
-    }
-
-    const profile =
-      data.profiles.find(
-        p =>
-          p.id ===
-          member.user_id
-      );
-
-    return (
-      profile?.name ||
-      (
-        member.user_id ===
-        currentUser?.id
-          ? "Yo"
-          : "Miembro"
-      )
-    );
-  }
-
-  function emptyHTML(
-    text
-  ) {
-    return `
-      <div class="empty-state">
-        ${escapeHTML(text)}
-      </div>
-    `;
-  }
-
-  /* =======================================================
-     REALTIME
-     ======================================================= */
-
-  function setupRealtime() {
-    if (
-      !onlineMode ||
-      !currentGroup ||
-      !supabaseClient
-    ) {
-      return;
-    }
-
-    if (realtimeChannel) {
-      try {
-        supabaseClient
-          .removeChannel(
-            realtimeChannel
-          );
-      } catch (_) {}
-
-      realtimeChannel =
-        null;
-    }
-
-    realtimeChannel =
-      supabaseClient
-        .channel(
-          "family-hub-" +
-          currentGroup.id
-        )
-
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "events",
-            filter:
-              `group_id=eq.${currentGroup.id}`
-          },
-          () =>
-            loadGroupData()
-        )
-
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "packing",
-            filter:
-              `group_id=eq.${currentGroup.id}`
-          },
-          () =>
-            loadGroupData()
-        )
-
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "messages",
-            filter:
-              `group_id=eq.${currentGroup.id}`
-          },
-          () =>
-            loadGroupData()
-        )
-
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "locations",
-            filter:
-              `group_id=eq.${currentGroup.id}`
-          },
-          () =>
-            loadGroupData()
-        )
-
-        .subscribe();
-  }
-
-  /* =======================================================
-     EVENTS / BINDINGS
-     ======================================================= */
-
-  function bindEvents() {
-    $("saveConfigBtn")
-      ?.addEventListener(
-        "click",
-        saveConfiguration
-      );
-
-    $("useOfflineFromConfig")
-      ?.addEventListener(
-        "click",
-        enterOffline
-      );
-
-    $("loginTab")
-      ?.addEventListener(
-        "click",
-        () =>
-          setAuthTab(
-            "login"
-          )
-      );
-
-    $("signupTab")
-      ?.addEventListener(
-        "click",
-        () =>
-          setAuthTab(
-            "signup"
-          )
-      );
-
-    $("loginForm")
-      ?.addEventListener(
-        "submit",
-        login
-      );
-
-    $("signupForm")
-      ?.addEventListener(
-        "submit",
-        signup
-      );
-
-    $("forgotPasswordBtn")
-      ?.addEventListener(
-        "click",
-        forgotPassword
-      );
-
-    $("offlineBtn")
-      ?.addEventListener(
-        "click",
-        enterOffline
-      );
-
-    $("resetConfigBtn")
-      ?.addEventListener(
-        "click",
-        showConfig
-      );
-
-    $("logoutBtn")
-      ?.addEventListener(
-        "click",
-        logout
-      );
-
-    $("settingsLogoutBtn")
-      ?.addEventListener(
-        "click",
-        logout
-      );
-
-    $("settingsConfigBtn")
-      ?.addEventListener(
-        "click",
-        showConfig
-      );
-
-    $("homeCreateTripBtn")
-      ?.addEventListener(
-        "click",
-        createGroup
-      );
-
-    $("homeJoinTripBtn")
-      ?.addEventListener(
-        "click",
-        joinGroup
-      );
-
-    $("addEventBtn")
-      ?.addEventListener(
-        "click",
-        () =>
-          openEventModal()
-      );
-
-    $("addPackingBtn")
-      ?.addEventListener(
-        "click",
-        addPacking
-      );
-
-    $("addPlaceBtn")
-      ?.addEventListener(
-        "click",
-        () =>
-          openPlaceModal()
-      );
-
-    $("addFoodBtn")
-      ?.addEventListener(
-        "click",
-        () =>
-          openFoodModal()
-      );
-
-    $("addActivityBtn")
-      ?.addEventListener(
-        "click",
-        () =>
-          openActivityModal()
-      );
-
-    $("messageForm")
-      ?.addEventListener(
-        "submit",
-        sendMessage
-      );
-
-    $("shareLocationBtn")
-      ?.addEventListener(
-        "click",
-        shareLocation
-      );
-
-    $("saveParkingBtn")
-      ?.addEventListener(
-        "click",
-        saveParking
-      );
-
-    $("addMemberBtn")
-      ?.addEventListener(
-        "click",
-        openMemberModal
-      );
-
-    $("modalClose")
-      ?.addEventListener(
-        "click",
-        closeModal
-      );
-
-    $("modalCancel")
-      ?.addEventListener(
-        "click",
-        closeModal
-      );
-
-    $("modalBackdrop")
-      ?.addEventListener(
-        "click",
-        closeModal
-      );
-
-    $("modalForm")
-      ?.addEventListener(
-        "submit",
-        submitModal
-      );
-
-    /*
-      ======================================================
-      MOBILE MENU
-
-      Antes:
-      sidebar.classList.toggle("open")
-
-      Ahora:
-      usamos el controlador completo del drawer.
-      ======================================================
-    */
-
-    $("mobileMenuBtn")
-      ?.addEventListener(
-        "click",
-        event => {
-          event.preventDefault();
-
-          event.stopPropagation();
-
-          toggleMobileMenu();
-        }
-      );
-
-    document.addEventListener(
-      "click",
-      handleDelegatedClick
-    );
-
-    window.addEventListener(
-      "online",
-      updateConnectionUI
-    );
-
-    window.addEventListener(
-      "offline",
-      updateConnectionUI
-    );
-  }
-
-  async function handleDelegatedClick(
-    event
-  ) {
-    /*
-      El botón del menú se maneja directamente
-      en bindEvents(), así que no hacemos nada
-      especial aquí con él.
-    */
-
-    const nav =
-      event.target.closest(
-        ".nav-item"
-      );
-
-    if (nav) {
-      navigate(
-        nav.dataset.view
-      );
-
-      return;
-    }
-
-    const link =
-      event.target.closest(
-        "[data-view-link]"
-      );
-
-    if (link) {
-      navigate(
-        link.dataset.viewLink
-      );
-
-      return;
-    }
-
-    const shareButton =
-      event.target.closest(
-        "[data-share-invite]"
-      );
-
-    if (shareButton) {
-      await inviteFamily();
-
-      return;
-    }
-
-    const copyButton =
-      event.target.closest(
-        "[data-copy-invite]"
-      );
-
-    if (copyButton) {
-      await copyInviteCode();
-
-      return;
-    }
-
-    const deleteButton =
-      event.target.closest(
-        "[data-delete-table]"
-      );
-
-    if (deleteButton) {
-      await deleteRecord(
-        deleteButton.dataset
-          .deleteTable,
-
-        deleteButton.dataset
-          .deleteId
-      );
-
-      return;
-    }
-
-    const toggle =
-      event.target.closest(
-        "[data-packing-toggle]"
-      );
-
-    if (toggle) {
-      const item =
-        data.packing.find(
-          x =>
-            x.id ===
-            toggle.dataset
-              .packingToggle
-        );
-
-      if (item) {
-        await togglePacking(
-          item
-        );
-      }
-
-      return;
-    }
-
-    const editEvent =
-      event.target.closest(
-        "[data-edit-event]"
-      );
-
-    if (editEvent) {
-      const item =
-        data.events.find(
-          x =>
-            x.id ===
-            editEvent.dataset
-              .editEvent
-        );
-
-      if (item) {
-        openEventModal(
-          item
-        );
-      }
-
-      return;
-    }
-
-    const editButton =
-      event.target.closest(
-        "[data-edit-table]"
-      );
-
-    if (editButton) {
-      const table =
-        editButton.dataset
-          .editTable;
-
-      const item =
-        data[table]?.find(
-          x =>
-            x.id ===
-            editButton.dataset
-              .editId
-        );
-
-      if (!item) return;
-
-      if (
-        table ===
-        "places"
-      ) {
-        openPlaceModal(
-          item
-        );
-      }
-
-      if (
-        table ===
-        "food"
-      ) {
-        openFoodModal(
-          item
-        );
-      }
-
-      if (
-        table ===
-        "activities"
-      ) {
-        openActivityModal(
-          item
-        );
-      }
-
-      return;
-    }
-
-    const removeMemberButton =
-      event.target.closest(
-        "[data-remove-member]"
-      );
-
-    if (removeMemberButton) {
-      const member =
-        data.members.find(
-          m =>
-            m.id ===
-            removeMemberButton
-              .dataset
-              .removeMember
-        );
-
-      if (member) {
-        await removeMember(
-          member
-        );
-      }
-    }
-  }
-
-  /* =======================================================
-     UTILITIES
-     ======================================================= */
-
-  function show(id) {
-    $(id)
-      ?.classList
-      .remove(
-        "hidden"
-      );
-  }
-
-  function hide(id) {
-    $(id)
-      ?.classList
-      .add(
-        "hidden"
-      );
-  }
-
-  function toast(
-    message
-  ) {
-    const element =
-      $("toast");
-
-    if (!element) {
-      return;
-    }
-
-    element.textContent =
-      message;
-
-    element.classList.add(
-      "show"
-    );
-
-    clearTimeout(
-      element._timeout
-    );
-
-    element._timeout =
-      setTimeout(
-        () => {
-          element.classList.remove(
-            "show"
-          );
-        },
-        3200
-      );
-  }
-
-  function setBusy(
-    form,
-    busy
-  ) {
-    if (!form) {
-      return;
-    }
-
-    const button =
-      form.querySelector(
-        "button[type=submit]"
-      );
-
-    if (!button) {
-      return;
-    }
-
-    button.disabled =
-      busy;
-
-    if (busy) {
-      if (
-        !button.dataset
-          .originalText
-      ) {
-        button.dataset
-          .originalText =
-            button.textContent;
-      }
-
-      button.textContent =
-        "Procesando...";
-    } else {
-      button.textContent =
-        button.dataset
-          .originalText ||
-        "Guardar";
-    }
-  }
-
-  function generateInviteCode() {
-    const chars =
-      "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-    let code =
-      "FAM-";
-
-    for (
-      let i = 0;
-      i < 6;
-      i++
-    ) {
-      code +=
-        chars[
-          Math.floor(
-            Math.random() *
-            chars.length
-          )
-        ];
-    }
-
-    return code;
-  }
-
-  function formatDateTime(
-    value
-  ) {
-    if (!value) {
-      return "";
-    }
-
-    try {
-      return new Intl.DateTimeFormat(
-        "es-PR",
-        {
-          dateStyle:
-            "short",
-
-          timeStyle:
-            "short"
-        }
-      ).format(
-        new Date(value)
-      );
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function escapeHTML(
-    value
-  ) {
-    return String(
-      value ?? ""
-    )
-      .replaceAll(
-        "&",
-        "&amp;"
-      )
-      .replaceAll(
-        "<",
-        "&lt;"
-      )
-      .replaceAll(
-        ">",
-        "&gt;"
-      )
-      .replaceAll(
-        '"',
-        "&quot;"
-      )
-      .replaceAll(
-        "'",
-        "&#039;"
-      );
-  }
-
-  function escapeAttr(
-    value
-  ) {
-    return escapeHTML(
-      value
-    );
-  }
-
-  function translateError(
-    message
-  ) {
-    const text =
-      String(
-        message || ""
-      );
-
-    if (
-      /invalid login credentials/i
-        .test(text)
-    ) {
-      return "Email o contraseña incorrectos.";
-    }
-
-    if (
-      /email not confirmed/i
-        .test(text)
-    ) {
-      return "Primero confirma tu email.";
-    }
-
-    if (
-      /user already registered/i
-        .test(text)
-    ) {
-      return "Ya existe una cuenta con ese email.";
-    }
-
-    if (
-      /password should be at least/i
-        .test(text)
-    ) {
-      return "La contraseña debe tener al menos 6 caracteres.";
-    }
-
-    if (
-      /duplicate key/i
-        .test(text)
-    ) {
-      return "Ese elemento ya existe.";
-    }
-
-    if (
-      /row-level security/i
-        .test(text)
-    ) {
-      return "Supabase bloqueó esta acción por las reglas de seguridad (RLS).";
-    }
-
-    if (
-      /failed to fetch/i
-        .test(text)
-    ) {
-      return "No pude conectar con Supabase. Verifica tu conexión a Internet.";
-    }
-
-    if (
-      /network/i
-        .test(text)
-    ) {
-      return "Hay un problema de conexión con Supabase.";
-    }
-
-    if (
-      /invalid supabaseurl/i
-        .test(text)
-    ) {
-      return "La configuración de Supabase no es válida. Revisa la Project URL.";
-    }
-
-    if (
-      /invalid.*url/i
-        .test(text)
-    ) {
-      return "La dirección de Supabase no es válida.";
-    }
-
-    return (
-      text ||
-      "Ocurrió un error. Intenta nuevamente."
-    );
-  }
+  function renderPacking(){const total=data.packing.length,done=data.packing.filter(x=>x.done).length,pct=total?Math.round(done/total*100):0;$("#summaryPct").textContent=`${pct}%`;$(`#summaryBar`).style.width=`${pct}%`;$(`#summaryText`).textContent=`${done} / ${total}`;$("#packingList").innerHTML=data.packing.map(x=>`<label class="check ${x.done?"done":""}"><input type="checkbox" ${x.done?"checked":""} data-pack-toggle="${esc(x.id)}"><span>${esc(x.name)}</span><button type="button" class="delete-btn" data-delete-table="packing" data-delete-id="${esc(x.id)}">×</button></label>`).join("")||`<div class="empty-panel"><p>Tu lista está vacía.</p></div>`}
+
+  function renderPlaces(){const q=$("#placeSearch")?.value.toLowerCase()||"";const arr=data.places.filter(x=>(x.name||"").toLowerCase().includes(q));$("#placesGrid").innerHTML=arr.map(x=>collectionCard(x,"places","⌖")).join("")||`<div class="empty-panel"><h3>No hay lugares</h3><p>Añade lugares o usa el itinerario.</p></div>`}
+  function renderFood(){$("#foodGrid").innerHTML=data.food.map(x=>collectionCard(x,"food","♡")).join("")||`<div class="empty-panel"><p>Añade restaurantes, snacks y Quick Bites.</p></div>`}
+  function renderActivities(){$("#activityGrid").innerHTML=data.activities.map(x=>collectionCard(x,"activities","✧")).join("")||`<div class="empty-panel"><p>Añade actividades.</p></div>`}
+  function collectionCard(x,table,symbol){const rating=x.rating?` · ${esc(x.rating)}★` : "";const reviews=x.review_count?` · ${esc(x.review_count)} reviews`:"";return `<article class="info-card"><div class="symbol">${symbol}</div><div class="item-meta"><span class="tag">${esc(x.category||"FAMILY")}</span>${x.family_friendly?`<span class="tag">FAMILY</span>`:""}${x.baby_friendly?`<span class="tag">BABY</span>`:""}${x.stroller?`<span class="tag">STROLLER</span>`:""}</div><h3>${esc(x.name)}${rating}${reviews}</h3><p>${esc(x.description||"Sin notas todavía.")}</p><div class="card-actions"><button class="edit-btn" data-edit-table="${table}" data-edit-id="${esc(x.id)}">Editar</button><button class="delete-btn" data-delete-table="${table}" data-delete-id="${esc(x.id)}">Eliminar</button>${x.maps_url?`<a class="edit-btn" href="${safeUrl(x.maps_url)}" target="_blank" rel="noopener">Mapa</a>`:""}</div></article>`}
+
+  function renderChat(){const mineId=currentUser?.id||"offline-user";$("#messages").innerHTML=data.messages.map(m=>{const mine=m.user_id===mineId;return `<div class="message ${mine?"me":""}"><strong>${esc(memberName(m.user_id))}</strong><br>${esc(m.body)}<small>${formatDateTime(m.created_at)}</small></div>`}).join("")||`<p class="muted">Todavía no hay mensajes.</p>`;const box=$("#messages");if(box)box.scrollTop=box.scrollHeight;$("#chatMembers").innerHTML=data.members.map(m=>memberHTML(m,false)).join("")}
+  function renderMembers(){const html=data.members.map(m=>memberHTML(m,true)).join("")||`<p class="muted">No hay miembros.</p>`;$("#membersList").innerHTML=html;$("#adminMembers").innerHTML=html}
+  function memberHTML(m,admin){const name=memberName(m.user_id,m), role=m.role||"adult", isOwner=m.user_id===currentGroup?.owner_id;const loc=data.locations.find(l=>l.user_id===m.user_id);return `<div class="member"><span>${esc(initials(name))}</span><div><strong>${esc(name)}</strong><small>${esc(role)}${loc?" · ubicación compartida":""}</small></div>${admin&&!isOwner&&canManageGroup()?`<button class="delete-btn" data-remove-member="${esc(m.id)}">Eliminar</button>`:""}</div>`}
+  function renderStatuses(){const s=data.travel_status||{};const labels=[[
+    "tsa","TSA pasado","Seguridad completada"],["boarding","Abordando","Estamos en la puerta"],["landed","Aterrizamos","Ya llegamos"],["bags","Equipaje recogido","Maletas listas"]];$("#travelStatuses").innerHTML=labels.map(([k,t,d])=>`<button class="status-card ${s[k]?"done":""}" data-status="${k}"><span>${s[k]?"✓":"○"}</span><div><strong>${t}</strong><small>${d}</small></div></button>`).join("");$$('[data-status]').forEach(b=>b.addEventListener("click",()=>toggleStatus(b.dataset.status)));$("#flightInfo").innerHTML=currentGroup?.flight_number?`Vuelo <strong>${esc(currentGroup.flight_number)}</strong>`:`No hay número de vuelo configurado.`}
+  function renderSettings(){const t=currentGroup||{};$("#tripNameInput").value=t.name||"";$("#tripDestinationInput").value=t.destination||"";$("#tripStartInput").value=t.start_date||"";$("#tripEndInput").value=t.end_date||"";$("#flightNumberInput").value=t.flight_number||"";$("#inviteCode").textContent=t.invite_code||"—"}
+  function renderWear(){const e=data.events.slice().sort(sortEvents)[0];let txt="";if(e?.wear)txt=e.wear;else if(/gem|mining/i.test(e?.title||""))txt="Zapatos cerrados, pantalón cómodo y una capa ligera.";else if(/beech mountain|mountain/i.test(e?.title||""))txt="Jacket ligera, pantalón largo y sneakers cómodos.";else if(/winery|church/i.test(e?.title||""))txt="Smart casual, zapatos cómodos y una capa ligera.";else txt="Para octubre: capas, pantalón cómodo, sneakers y jacket ligera accesible.";$("#wearSummary").textContent=txt}
+
+  /* ---------------- TRIP SETTINGS / STATUS ---------------- */
+  async function saveTripSettings(e){e.preventDefault();if(!currentGroup)return toast("Primero crea un viaje.");const vals={name:$("#tripNameInput").value.trim(),destination:$("#tripDestinationInput").value.trim(),start_date:$("#tripStartInput").value||null,end_date:$("#tripEndInput").value||null,flight_number:$("#flightNumberInput").value.trim()};if(!onlineMode||!supabaseClient||currentGroup.id==="offline-trip"){currentGroup={...currentGroup,...vals};groups=groups.map(g=>g.id===currentGroup.id?currentGroup:g);saveCachedData();renderAll();return toast("Viaje actualizado.")}const {data:g,error}=await supabaseClient.from("groups").update(vals).eq("id",currentGroup.id).select().single();if(error)return toast(translateError(error.message));currentGroup={...currentGroup,...g};groups=groups.map(x=>x.id===currentGroup.id?currentGroup:x);renderAll();toast("Viaje actualizado.")}
+  async function toggleStatus(key){if(!currentGroup)return;const next={...(data.travel_status||{}),group_id:currentGroup.id,[key]:!(data.travel_status?.[key])};if(!onlineMode||!supabaseClient||currentGroup.id==="offline-trip"){data.travel_status=next;saveCachedData();renderStatuses();return}const {error}=await supabaseClient.from("travel_status").upsert(next,{onConflict:"group_id"});if(error)return toast(translateError(error.message));data.travel_status=next;renderStatuses()}
+
+  /* ---------------- INVITES / MEMBERS ---------------- */
+  async function removeMember(member){if(member.user_id===currentGroup?.owner_id)return toast("El owner no se puede eliminar del viaje.");if(!confirm(`¿Eliminar a ${memberName(member.user_id,member)} del viaje?`))return;if(!onlineMode||!supabaseClient||currentGroup.id==="offline-trip"){data.members=data.members.filter(x=>x.id!==member.id);saveCachedData();renderAll();return}const {error}=await supabaseClient.from("members").delete().eq("id",member.id);if(error)return toast(translateError(error.message));data.members=data.members.filter(x=>x.id!==member.id);renderAll();toast("Miembro eliminado del viaje.")}
+  async function copyInviteCode(){if(!currentGroup?.invite_code)return;await copyText(currentGroup.invite_code);toast("Código copiado.")}
+  async function shareInvite(){if(!currentGroup?.invite_code)return;const text=`¡Únete a nuestro viaje en Nuestra Aventura!\n\n${currentGroup.name}\n${currentGroup.destination||""}\n\nCódigo: ${currentGroup.invite_code}\n\n${SITE_URL}`;if(navigator.share){try{await navigator.share({title:"Invitación · Nuestra Aventura",text,url:SITE_URL});return}catch(e){if(e.name==="AbortError")return}}await copyText(text);toast("Invitación copiada. Puedes pegarla en WhatsApp.")}
+
+  /* ---------------- CHAT / LOCATION ---------------- */
+  async function sendMessage(e){e.preventDefault();const input=$("#chatInput"),body=input.value.trim();if(!body)return;if(!currentGroup)return toast("Primero crea un viaje.");if(!onlineMode||!supabaseClient||currentGroup.id==="offline-trip"){data.messages.push({id:crypto.randomUUID(),group_id:currentGroup.id,user_id:currentUser?.id||"offline-user",body,created_at:new Date().toISOString()});saveCachedData();input.value="";renderChat();return}const {data:m,error}=await supabaseClient.from("messages").insert({group_id:currentGroup.id,user_id:currentUser.id,body}).select().single();if(error)return toast(translateError(error.message));data.messages.push(m);input.value="";renderChat()}
+  function getPosition(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error("Geolocation no disponible"));navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,timeout:15000,maximumAge:10000})})}
+  async function shareLocation(){if(!currentGroup)return toast("Primero crea un viaje.");try{const p=await getPosition();const row={group_id:currentGroup.id,user_id:currentUser?.id||"offline-user",lat:p.coords.latitude,lon:p.coords.longitude,name:"Mi ubicación",updated_at:new Date().toISOString()};if(!onlineMode||!supabaseClient||currentGroup.id==="offline-trip"){data.locations=data.locations.filter(x=>x.user_id!==row.user_id);data.locations.push({id:crypto.randomUUID(),...row});saveCachedData();renderMembers();renderMapMarkers();toast("Ubicación guardada.");return}const {error}=await supabaseClient.from("locations").upsert(row,{onConflict:"group_id,user_id"});if(error)return toast(translateError(error.message));await loadGroupData();toast("Ubicación compartida.")}catch(e){toast("No pude obtener tu ubicación. Revisa el permiso del navegador.")}}
+  async function saveCar(){if(!currentGroup)return toast("Primero crea un viaje.");try{const p=await getPosition();const car={group_id:currentGroup.id,user_id:currentUser?.id||"offline-user",lat:p.coords.latitude,lon:p.coords.longitude,updated_at:new Date().toISOString()};if(!onlineMode||!supabaseClient||currentGroup.id==="offline-trip"){data.parking=car;saveCachedData();renderMapMarkers();updateCarStatus();toast("Ubicación del carro guardada.");return}const {error}=await supabaseClient.from("parking").upsert(car,{onConflict:"group_id"});if(error)return toast(translateError(error.message));data.parking=car;renderMapMarkers();updateCarStatus();toast("Ubicación del carro guardada.")}catch(e){toast("No pude obtener tu ubicación.")}}
+  function findCar(){if(!data.parking)return toast("No hay una ubicación de carro guardada.");window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(data.parking.lat)},${encodeURIComponent(data.parking.lon)}&travelmode=driving`,"_blank","noopener")}
+  function updateCarStatus(){if($("#carStatus"))$("#carStatus").textContent=data.parking?`Guardado ${formatDateTime(data.parking.updated_at)}`:"No hay ubicación guardada."}
+
+  /* ---------------- MAP ---------------- */
+  function initMap(){if(!window.L||!$("#map"))return;if(mapObj){mapObj.invalidateSize();renderMapMarkers();return}mapObj=L.map("map",{zoomControl:true}).setView([35.8,-80.3],7);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap contributors"}).addTo(mapObj);renderMapMarkers()}
+  function renderMapMarkers(){if(!mapObj)return;for(const m of mapMarkers.values())m.remove();mapMarkers.clear();const points=[];data.locations.forEach(l=>{const name=memberName(l.user_id);const m=L.marker([l.lat,l.lon]).addTo(mapObj).bindPopup(`<strong>${esc(name)}</strong><br>${esc(l.name||"Ubicación")}`);mapMarkers.set(`u:${l.user_id}`,m);points.push([l.lat,l.lon])});if(data.parking){const m=L.marker([data.parking.lat,data.parking.lon]).addTo(mapObj).bindPopup("🚗 Carro");mapMarkers.set("car",m);points.push([data.parking.lat,data.parking.lon])}if(points.length)mapObj.fitBounds(points,{padding:[30,30],maxZoom:12});updateCarStatus()}
+
+  /* ---------------- WEATHER ---------------- */
+  async function loadWeather(force=false){if(!currentGroup?.destination)return;if(!force&&weatherTimer&&Date.now()-weatherTimer<600000)return;weatherTimer=Date.now();try{const geo=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(currentGroup.destination)}&count=1&language=en&format=json`).then(r=>r.json());const r=geo.results?.[0];if(!r)throw new Error("No location");const forecast=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${r.latitude}&longitude=${r.longitude}&current=temperature_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto&forecast_days=16`).then(x=>x.json());const c=forecast.current;$("#weatherTemp").textContent=`${Math.round(c.temperature_2m)}°F`;$("#weatherDesc").textContent=weatherText(c.weather_code);$("#weatherMeta").textContent=`Viento ${Math.round(c.wind_speed_10m)} mph`;$("#weatherIcon").textContent=weatherIcon(c.weather_code);$("#weatherForecast").innerHTML=(forecast.daily?.time||[]).map((d,i)=>`<div class="forecast-day"><small>${new Date(d+"T12:00:00").toLocaleDateString("es-PR",{weekday:"short",month:"short",day:"numeric"})}</small><strong>${Math.round(forecast.daily.temperature_2m_max[i])}° / ${Math.round(forecast.daily.temperature_2m_min[i])}°</strong></div>`).join("");renderWear()}catch(e){$("#weatherDesc").textContent="Clima no disponible";$("#weatherMeta").textContent=onlineMode?"Intenta actualizar":"Sin conexión"}}
+  function weatherText(code){if(code===0)return"Despejado";if([1,2,3].includes(code))return"Parcialmente nublado";if([45,48].includes(code))return"Neblina";if([51,53,55,56,57].includes(code))return"Llovizna";if([61,63,65,66,67].includes(code))return"Lluvia";if([71,73,75,77].includes(code))return"Nieve";if([80,81,82].includes(code))return"Chubascos";if([95,96,99].includes(code))return"Tormenta";return"Tiempo variable"}
+  function weatherIcon(code){if(code===0)return"☀";if([1,2,3].includes(code))return"☁";if([51,53,55,61,63,65,80,81,82].includes(code))return"☂";if([71,73,75,77].includes(code))return"❄";if([95,96,99].includes(code))return"⚡";return"☼"}
+
+  /* ---------------- NOVA ---------------- */
+  async function askNOVA(e, directQuestion=null){if(e)e.preventDefault();const input=$("#aiInput");const q=(directQuestion??input.value).trim();if(!q)return;appendAI(q,true);if(input)input.value="";const answer=buildNOVAAnswer(q);setTimeout(()=>appendAI(answer,false),120)}
+  function appendAI(text,me){const box=$("#aiMessages");const div=document.createElement("div");div.className=`ai-bubble ${me?"user":""}`;div.textContent=text;box.appendChild(div);box.scrollTop=box.scrollHeight}
+  function buildNOVAAnswer(q){const l=q.toLowerCase();const events=data.events.slice().sort(sortEvents);const missing=data.packing.filter(x=>!x.done).map(x=>x.name);if(/equipaje|falta|llevar|packing/.test(l))return missing.length?`Faltan ${missing.length} cosas: ${missing.slice(0,10).join(", ")}${missing.length>10?"…":""}.`:`El packing está completo: 100%.`;if(/poner|vestir|ropa|jacket|zapatos/.test(l)){const e=events.find(x=>x.wear)||events[0];return e?.wear?`Para ${e.title}: ${e.wear}`:`Para octubre te conviene vestir por capas: pantalón cómodo, sneakers y una jacket ligera accesible. Para gem mining, usa zapatos cerrados.`}if(/hoy|hacemos|plan/.test(l)){const today=new Date().toISOString().slice(0,10);const todayEvents=events.filter(e=>e.date===today);return todayEvents.length?`Hoy tienes: ${todayEvents.map(e=>`${e.time||""} ${e.title}`).join(" · ")}`:events.length?`El próximo plan es ${events[0].title}${events[0].time?` a las ${events[0].time}`:""}.`:`Todavía no hay actividades programadas.`}if(/cerca|ruta|mapa|manejo|drive/.test(l)){const e=events.find(x=>x.location);return e?`En tu itinerario aparece ${e.title} en ${e.location}. Puedes abrir el mapa desde el evento.`:`Añade ubicaciones al itinerario y puedo usarlas como referencia.`}if(/miembro|familia|grupo/.test(l))return`Este viaje tiene ${data.members.length} miembro${data.members.length===1?"":"s"}. Puedes administrar personas desde “Grupo & ajustes”.`;if(/clima|frío|frio|temperatura|weather/.test(l))return`El panel de Inicio usa el clima actual y el pronóstico del destino. Para una actividad concreta, dime el nombre y puedo usar sus notas de vestimenta si las guardaste.`;return`Puedo ayudarte con ${currentGroup?.name||"tu viaje"}: itinerario, equipaje, clima, ropa, familia, mapas y actividades. Prueba “¿Qué me pongo?” o “¿Qué falta en el equipaje?”.`}
+
+  /* ---------------- NAV / DRAWER ---------------- */
+  function navigate(view){if(!view)return;$$('.view').forEach(v=>v.classList.remove("active-view"));$("#view-"+view)?.classList.add("active-view");$$('.nav-item').forEach(b=>b.classList.toggle("active",b.dataset.view===view));const names={home:"Inicio",itinerary:"Itinerario",places:"Lugares",packing:"Equipaje",food:"Comida",activities:"Actividades",map:"Mapa & familia",airport:"Viaje",chat:"Familia",assistant:"NOVA",settings:"Grupo & ajustes"};$("#pageName").textContent=names[view]||view;closeDrawer();if(view==="map")setTimeout(initMap,80)}
+  function setupDrawer(){const sidebar=$("#sidebar");if(!sidebar)return;sidebar.addEventListener("touchstart",e=>{const t=e.touches[0];drawerTouch={x:t.clientX,y:t.clientY}} ,{passive:true});sidebar.addEventListener("touchend",e=>{if(!drawerTouch)return;const t=e.changedTouches[0],dx=t.clientX-drawerTouch.x,dy=t.clientY-drawerTouch.y;drawerTouch=null;if(dx<-70&&Math.abs(dx)>Math.abs(dy))closeDrawer()},{passive:true});document.addEventListener("click",e=>{if(e.target.id==="drawerOverlay")closeDrawer()});$("#sidebar").insertAdjacentHTML("afterend","<div id=\"drawerOverlay\" class=\"drawer-overlay\"></div>")}
+  function openDrawer(){if(innerWidth>800)return;$("#sidebar")?.classList.add("open");$("#drawerOverlay")?.classList.add("show");document.body.style.overflow="hidden"}
+  function closeDrawer(){$("#sidebar")?.classList.remove("open");$("#drawerOverlay")?.classList.remove("show");document.body.style.overflow=""}
+
+  /* ---------------- OFFLINE CACHE ---------------- */
+  function enterOffline(showToast=true){onlineMode=false;currentUser={id:"offline-user",email:"",user_metadata:{name:"Modo local"}};currentGroup=offlineSeed;groups=[offlineSeed];loadCachedDataForCurrentGroup();showAuth(false);renderAll();if(showToast)toast("Modo sin cuenta activado en este dispositivo.")}
+  function cacheCurrentGroup(){if(!currentGroup)return;localStorage.setItem(STORAGE.currentGroup,currentGroup.id);saveCachedData()}
+  function saveCachedData(){try{localStorage.setItem(STORAGE.offline,JSON.stringify({group:currentGroup,data}))}catch(e){console.warn("Cache:",e)}}
+  function loadCachedCurrentGroup(){try{const saved=JSON.parse(localStorage.getItem(STORAGE.offline)||"null");if(saved?.group){currentGroup=saved.group;data=saved.data||emptyData();groups=[currentGroup];renderAll()}}catch(e){}}
+  function loadCachedDataForCurrentGroup(){try{const saved=JSON.parse(localStorage.getItem(STORAGE.offline)||"null");if(saved?.group?.id===currentGroup?.id){data=saved.data||emptyData();return}}catch(e){}data=emptyData();renderAll()}
+
+  /* ---------------- REALTIME ---------------- */
+  function setupRealtime(){teardownRealtime();if(!supabaseClient||!currentGroup||!onlineMode)return;const gid=currentGroup.id;realtimeChannel=supabaseClient.channel(`family-hub-${gid}`).on("postgres_changes",{event:"*",schema:"public",table:"events",filter:`group_id=eq.${gid}`},loadGroupData).on("postgres_changes",{event:"*",schema:"public",table:"packing",filter:`group_id=eq.${gid}`},loadGroupData).on("postgres_changes",{event:"*",schema:"public",table:"places",filter:`group_id=eq.${gid}`},loadGroupData).on("postgres_changes",{event:"*",schema:"public",table:"food",filter:`group_id=eq.${gid}`},loadGroupData).on("postgres_changes",{event:"*",schema:"public",table:"activities",filter:`group_id=eq.${gid}`},loadGroupData).on("postgres_changes",{event:"*",schema:"public",table:"messages",filter:`group_id=eq.${gid}`},loadGroupData).on("postgres_changes",{event:"*",schema:"public",table:"locations",filter:`group_id=eq.${gid}`},loadGroupData).subscribe()}
+  function teardownRealtime(){if(realtimeChannel&&supabaseClient){supabaseClient.removeChannel(realtimeChannel).catch(()=>{});realtimeChannel=null}}
+
+  /* ---------------- HELPERS ---------------- */
+  function memberName(userId, fallback){const p=data.profiles.find(x=>x.id===userId);if(p?.name)return p.name;if(fallback?.name)return fallback.name;if(userId===currentUser?.id)return currentUser.user_metadata?.name||"Yo";return "Miembro"}
+  function canManageGroup(){return currentGroup?.my_role==="owner"||currentGroup?.my_role==="admin"||currentGroup?.owner_id===currentUser?.id}
+  function sortEvents(a,b){return `${a.date||"9999"} ${a.time||"99:99"}`.localeCompare(`${b.date||"9999"} ${b.time||"99:99"}`)}
+  function daysUntil(date){if(!date)return null;const a=new Date();a.setHours(0,0,0,0);const b=new Date(date+"T00:00:00");return Math.max(0,Math.ceil((b-a)/86400000))}
+  function fmt(x){return x?new Date(x+"T12:00:00").toLocaleDateString("es-PR",{day:"numeric",month:"short"}):"—"}
+  function formatDateTime(x){if(!x)return"";try{return new Intl.DateTimeFormat("es-PR",{dateStyle:"short",timeStyle:"short"}).format(new Date(x))}catch{return""}}
+  function initials(n){return String(n||"?").split(/\s+/).map(x=>x[0]).join("").slice(0,2).toUpperCase()}
+  function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]))}
+  function safeUrl(url){try{const u=new URL(url,location.href);return ["https:","http:"].includes(u.protocol)?esc(u.href):"#"}catch{return"#"}}
+  function generateInviteCode(){const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";let s="FAM-";for(let i=0;i<6;i++)s+=chars[Math.floor(Math.random()*chars.length)];return s}
+  async function copyText(text){try{await navigator.clipboard.writeText(text)}catch{prompt("Copia este texto:",text)}}
+  function toast(message){const t=$("#toast");if(!t)return;t.textContent=message;t.classList.add("show");clearTimeout(t._timer);t._timer=setTimeout(()=>t.classList.remove("show"),3000)}
+  function setAuthMessage(msg){$("#authMsg").textContent=msg||""}
+  function translateError(message){const t=String(message||"");if(/invalid login credentials/i.test(t))return"Email o contraseña incorrectos.";if(/email not confirmed/i.test(t))return"Primero confirma tu email.";if(/user already registered/i.test(t))return"Ya existe una cuenta con ese email.";if(/password should be at least/i.test(t))return"La contraseña debe tener al menos 6 caracteres.";if(/row-level security/i.test(t))return"Supabase bloqueó la acción por RLS. Ejecuta el SQL V4 completo.";if(/join_group_by_invite/i.test(t))return"Falta ejecutar la función de invitación en Supabase.";if(/duplicate key/i.test(t))return"Ese registro ya existe.";return t||"Ocurrió un error."}
+  function updateConnectionUI(){const offline=!navigator.onLine||!onlineMode;$("#connectionText").textContent=offline?"Sin conexión":"Conectado";$("#connectionDot")?.parentElement.classList.toggle("offline",offline);$("#offlineBanner")?.classList.toggle("hidden",!offline)}
+  function applyTheme(){if(localStorage.getItem(STORAGE.theme)==="dark")document.body.classList.add("dark")}
+  function toggleTheme(){document.body.classList.toggle("dark");localStorage.setItem(STORAGE.theme,document.body.classList.contains("dark")?"dark":"light")}
 
 })();
