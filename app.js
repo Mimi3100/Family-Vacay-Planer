@@ -1,6 +1,6 @@
 /* =========================================================
    NUESTRA AVENTURA · FAMILY HUB · V4
-   Real Supabase app: auth, multiple trips, shared data,
+   Real Supabase app: anonymous family access, multiple trips, shared data,
    invitations, offline cache, realtime, map, weather and NOVA.
    ========================================================= */
 (() => {
@@ -100,10 +100,8 @@
   }
 
   function bindEvents() {
+    $("#guestForm")?.addEventListener("submit", guestLogin);
     $$('[data-auth-tab]').forEach(btn => btn.addEventListener("click", () => setAuthTab(btn.dataset.authTab)));
-    $("#loginForm")?.addEventListener("submit", login);
-    $("#signupForm")?.addEventListener("submit", signup);
-    $("#forgotPasswordBtn")?.addEventListener("click", forgotPassword);
     $("#offlineBtn")?.addEventListener("click", () => enterOffline(true));
     $("#signOutBtn")?.addEventListener("click", logout);
     $("#themeBtn")?.addEventListener("click", toggleTheme);
@@ -207,52 +205,18 @@
     if (show) setAuthMessage("");
   }
 
-  function setAuthTab(type) {
-    const login = type === "login";
-    $("#loginForm")?.classList.toggle("hidden", !login);
-    $("#signupForm")?.classList.toggle("hidden", login);
-    $$('[data-auth-tab]').forEach(b => b.classList.toggle("active", b.dataset.authTab === type));
-    setAuthMessage("");
-  }
-
-  async function login(e) {
+  async function guestLogin(e) {
     e.preventDefault();
     if (!supabaseClient) return setAuthMessage("Supabase no está configurado.");
-    const email = $("#loginEmail").value.trim();
-    const password = $("#loginPassword").value;
+    const name = $("#guestName")?.value.trim();
+    if (!name) return setAuthMessage("Escribe tu nombre.");
     setAuthMessage("Entrando…");
-    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-    if (error) setAuthMessage(translateError(error.message));
-  }
-
-  async function signup(e) {
-    e.preventDefault();
-    if (!supabaseClient) return setAuthMessage("Supabase no está configurado.");
-    const name = $("#signupName").value.trim();
-    const email = $("#signupEmail").value.trim();
-    const password = $("#signupPassword").value;
-    const password2 = $("#signupPassword2").value;
-    if (password !== password2) return setAuthMessage("Las contraseñas no coinciden.");
-    setAuthMessage("Creando cuenta…");
-    const { data: result, error } = await supabaseClient.auth.signUp({
-      email,
-      password,
-      options: { data: { name }, emailRedirectTo: SITE_URL }
+    const { data: result, error } = await supabaseClient.auth.signInAnonymously({
+      options: { data: { name } }
     });
     if (error) return setAuthMessage(translateError(error.message));
-    if (result.session) {
-      currentUser = result.user;
-      await initializeCloudUser();
-    } else {
-      setAuthMessage("Cuenta creada. Revisa tu email para confirmar la cuenta si Supabase tiene esa opción activada.");
-    }
-  }
-
-  async function forgotPassword() {
-    const email = $("#loginEmail")?.value.trim();
-    if (!email) return setAuthMessage("Escribe tu email primero.");
-    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: SITE_URL });
-    setAuthMessage(error ? translateError(error.message) : "Te envié el enlace para cambiar tu contraseña.");
+    currentUser = result.user;
+    await initializeCloudUser(name);
   }
 
   async function logout() {
@@ -260,18 +224,19 @@
     else enterOffline(false);
   }
 
-  async function initializeCloudUser() {
+  async function initializeCloudUser(preferredName = "") {
     showAuth(false);
     onlineMode = !!supabaseClient && navigator.onLine;
-    await ensureProfile();
+    await ensureProfile(preferredName);
     await loadGroups();
+    renderAll();
   }
 
-  async function ensureProfile() {
+  async function ensureProfile(preferredName = "") {
     if (!currentUser || !supabaseClient) return;
-    const name = currentUser.user_metadata?.name || currentUser.email?.split("@")[0] || "Usuario";
+    const name = preferredName || currentUser.user_metadata?.name || "Usuario";
     const { error } = await supabaseClient.from("profiles").upsert({
-      id: currentUser.id, email: currentUser.email || "", name
+      id: currentUser.id, email: "", name
     }, { onConflict: "id" });
     if (error) console.warn("Profile:", error.message);
   }
@@ -304,7 +269,7 @@
   }
 
   async function createGroup() {
-    if (!currentUser || !supabaseClient) return toast("Inicia sesión para crear un viaje compartido.");
+    if (!currentUser || !supabaseClient) return toast("Primero entra con tu nombre.");
     const name = prompt("Nombre del viaje:", "Nuestra Aventura")?.trim();
     if (!name) return;
     const destination = prompt("Destino:", "Blowing Rock, NC")?.trim() || "";
@@ -324,7 +289,7 @@
   }
 
   async function joinGroup() {
-    if (!currentUser || !supabaseClient) return toast("Inicia sesión para unirte a un viaje.");
+    if (!currentUser || !supabaseClient) return toast("Primero entra con tu nombre.");
     const code = prompt("Código de invitación:")?.trim().toUpperCase();
     if (!code) return;
     if (!navigator.onLine) return toast("Necesitas conexión para unirte a un viaje compartido.");
@@ -601,7 +566,7 @@
   function closeDrawer(){$("#sidebar")?.classList.remove("open");$("#drawerOverlay")?.classList.remove("show");document.body.style.overflow=""}
 
   /* ---------------- OFFLINE CACHE ---------------- */
-  function enterOffline(showToast=true){onlineMode=false;currentUser={id:"offline-user",email:"",user_metadata:{name:"Modo local"}};currentGroup=offlineSeed;groups=[offlineSeed];loadCachedDataForCurrentGroup();showAuth(false);renderAll();if(showToast)toast("Modo sin cuenta activado en este dispositivo.")}
+  function enterOffline(showToast=true){onlineMode=false;currentUser={id:"offline-user",email:"",user_metadata:{name:"Modo local"}};currentGroup=offlineSeed;groups=[offlineSeed];loadCachedDataForCurrentGroup();showAuth(false);renderAll();if(showToast)toast("Modo local activado en este dispositivo.")}
   function cacheCurrentGroup(){if(!currentGroup)return;localStorage.setItem(STORAGE.currentGroup,currentGroup.id);saveCachedData()}
   function saveCachedData(){try{localStorage.setItem(STORAGE.offline,JSON.stringify({group:currentGroup,data}))}catch(e){console.warn("Cache:",e)}}
   function loadCachedCurrentGroup(){try{const saved=JSON.parse(localStorage.getItem(STORAGE.offline)||"null");if(saved?.group){currentGroup=saved.group;data=saved.data||emptyData();groups=[currentGroup];renderAll()}}catch(e){}}
@@ -625,7 +590,7 @@
   async function copyText(text){try{await navigator.clipboard.writeText(text)}catch{prompt("Copia este texto:",text)}}
   function toast(message){const t=$("#toast");if(!t)return;t.textContent=message;t.classList.add("show");clearTimeout(t._timer);t._timer=setTimeout(()=>t.classList.remove("show"),3000)}
   function setAuthMessage(msg){$("#authMsg").textContent=msg||""}
-  function translateError(message){const t=String(message||"");if(/invalid login credentials/i.test(t))return"Email o contraseña incorrectos.";if(/email not confirmed/i.test(t))return"Primero confirma tu email.";if(/user already registered/i.test(t))return"Ya existe una cuenta con ese email.";if(/password should be at least/i.test(t))return"La contraseña debe tener al menos 6 caracteres.";if(/row-level security/i.test(t))return"Supabase bloqueó la acción por RLS. Ejecuta el SQL V4 completo.";if(/join_group_by_invite/i.test(t))return"Falta ejecutar la función de invitación en Supabase.";if(/duplicate key/i.test(t))return"Ese registro ya existe.";return t||"Ocurrió un error."}
+  function translateError(message){const t=String(message||"");if(/anonymous sign-ins are disabled|anonymous provider/i.test(t))return"Supabase tiene desactivado el acceso sin cuenta. Activa Anonymous Sign-Ins en Authentication > Sign In / Providers.";if(/row-level security/i.test(t))return"Supabase bloqueó la acción por RLS. Ejecuta el SQL V4 completo.";if(/join_group_by_invite/i.test(t))return"Falta ejecutar la función de invitación en Supabase.";if(/duplicate key/i.test(t))return"Ese registro ya existe.";return t||"Ocurrió un error."}
   function updateConnectionUI(){const offline=!navigator.onLine||!onlineMode;$("#connectionText").textContent=offline?"Sin conexión":"Conectado";$("#connectionDot")?.parentElement.classList.toggle("offline",offline);$("#offlineBanner")?.classList.toggle("hidden",!offline)}
   function applyTheme(){if(localStorage.getItem(STORAGE.theme)==="dark")document.body.classList.add("dark")}
   function toggleTheme(){document.body.classList.toggle("dark");localStorage.setItem(STORAGE.theme,document.body.classList.contains("dark")?"dark":"light")}
