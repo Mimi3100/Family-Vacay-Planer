@@ -1,32 +1,24 @@
-# Nuestra Aventura — versión REAL
+# Nuestra Aventura · Family Hub V4
 
-Esta versión reemplaza el localStorage como sistema principal por Supabase cuando `config.js` tiene una URL y anon key válidas.
+Real family travel app for GitHub Pages + Supabase.
 
-## Lo que ya está implementado
-- Login / registro.
-- Crear grupo y código de invitación.
-- Añadir/eliminar miembros (admin/owner).
-- Datos del viaje editables.
-- Itinerario compartido y editable.
-- Equipaje compartido.
-- Lugares, comida y actividades.
-- Chat familiar con sincronización realtime.
-- Compartir ubicación manual con consentimiento.
-- Mapa familiar con Leaflet/OpenStreetMap.
-- Guardar ubicación del carro y abrir navegación.
-- Estados de viaje: TSA, boarding, landed, baggage.
-- Weather actual del destino vía Open-Meteo.
-- PWA/offline cache.
-- Modo local para probar la interfaz sin cuenta.
+## Includes
+- Supabase email/password accounts with persistent sessions.
+- Multiple trips per account and a trip switcher.
+- Real invite-code joining through `join_group_by_invite` RPC.
+- Real shared members with admin/owner removal controls.
+- Editable itinerary, packing, places, food and activities.
+- Rich itinerary fields: drive time, arrival/departure, duration, maps, parking, bathrooms and clothing notes.
+- Family/baby/stroller flags.
+- Shared chat, locations, car parking and travel status.
+- OpenStreetMap/Leaflet family map.
+- Current weather and seven-day forecast through Open-Meteo.
+- Contextual NOVA assistant based on the current trip data.
+- Offline local mode and cached last-known cloud data.
+- Mobile drawer with outside-tap, Escape and left-swipe close.
 
-## Configuración
-1. Crea un proyecto Supabase.
-2. Ejecuta `supabase-schema.sql` en SQL Editor.
-3. En Supabase Authentication habilita Email/Password.
-4. Copia Project URL y anon public key a `config.js`.
-5. Sube todos los archivos al repositorio de GitHub Pages.
-
-## Importante
-La ubicación funciona mientras el usuario autoriza y ejecuta la app; un navegador web/PWA no debe prometer el mismo seguimiento continuo en segundo plano que Find My de Apple. Para tracking de fondo de nivel nativo habría que convertir esto en una app móvil nativa/wrapper y configurar permisos de background location.
-
-No uses una service_role key en `config.js`.
+## Deploy
+1. Run `supabase-schema.sql` once if creating the database from zero.
+2. If the old schema is already installed, run `supabase-schema-v4.sql`.
+3. Keep the publishable/anon key in `config.js`; never use a service_role key.
+4. Upload all project files to GitHub Pages.
