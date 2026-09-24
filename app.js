@@ -24,7 +24,7 @@
 
   /* =======================================================
      BUILT-IN SUPABASE CONFIG
-     
+
      These are publishable client credentials.
      NEVER put a service_role key here.
      ======================================================= */
@@ -62,6 +62,26 @@
 
   let realtimeChannel = null;
 
+  /*
+    Mobile menu touch state.
+  */
+
+  let mobileMenuTouchStartX = 0;
+
+  let mobileMenuTouchStartY = 0;
+
+  let mobileMenuTouchCurrentX = 0;
+
+  let mobileMenuTouchCurrentY = 0;
+
+  let mobileMenuTouchActive = false;
+
+  let mobileMenuPreviousBodyOverflow = "";
+
+  let mobileMenuPreviousBodyTouchAction = "";
+
+  let mobileMenuInitialized = false;
+
   let data = {
     events: [],
     packing: [],
@@ -95,6 +115,13 @@
   async function init() {
     try {
       bindEvents();
+
+      /*
+        Inicializamos el menú después de que
+        todos los elementos del DOM estén disponibles.
+      */
+
+      initializeMobileMenu();
     } catch (error) {
       console.error(
         "Error inicializando eventos:",
@@ -132,7 +159,7 @@
     /*
       Si todavía no tenemos una configuración válida,
       usamos la configuración incorporada.
-      
+
       Esto evita que un config.js viejo con:
       "pega aqui tu project url"
       rompa la aplicación.
@@ -474,6 +501,8 @@
 
                 data.members = [];
 
+                closeMobileMenu();
+
                 if (realtimeChannel) {
                   try {
                     await supabaseClient
@@ -680,6 +709,8 @@
   }
 
   function showConfig() {
+    closeMobileMenu();
+
     hide("loadingScreen");
 
     hide("authScreen");
@@ -774,6 +805,8 @@
      ======================================================= */
 
   function showAuth() {
+    closeMobileMenu();
+
     hide("loadingScreen");
 
     hide("configScreen");
@@ -907,11 +940,6 @@
           error
         );
 
-        /*
-          Restauramos los valores por si el navegador
-          o el formulario los hubiera limpiado.
-        */
-
         if ($("loginEmail")) {
           $("loginEmail").value =
             email;
@@ -944,19 +972,9 @@
       currentUser =
         result.user;
 
-      /*
-        Usamos exactamente el mismo flujo que
-        INITIAL_SESSION/SIGNED_IN.
-      */
-
       await handleAuthenticatedUser(
         result.user
       );
-
-      /*
-        Solo limpiamos la contraseña después
-        de un login exitoso.
-      */
 
       if ($("loginPassword")) {
         $("loginPassword").value =
@@ -967,10 +985,6 @@
         "LOGIN ERROR:",
         error
       );
-
-      /*
-        Conservamos los datos introducidos.
-      */
 
       if ($("loginEmail")) {
         $("loginEmail").value =
@@ -1196,6 +1210,8 @@
      ======================================================= */
 
   async function logout() {
+    closeMobileMenu();
+
     try {
       if (
         onlineMode &&
@@ -1241,6 +1257,8 @@
      ======================================================= */
 
   function enterOffline() {
+    closeMobileMenu();
+
     onlineMode = false;
 
     supabaseClient = null;
@@ -1344,6 +1362,8 @@
      ======================================================= */
 
   function showApp() {
+    closeMobileMenu();
+
     hide("loadingScreen");
 
     hide("configScreen");
@@ -1439,6 +1459,14 @@
   function navigate(view) {
     currentView =
       view;
+
+    /*
+      Siempre cerramos el menú al navegar.
+      Esto evita que el drawer quede abierto
+      encima de la nueva pantalla.
+    */
+
+    closeMobileMenu();
 
     document
       .querySelectorAll(".view")
@@ -1536,12 +1564,598 @@
           titles[view]?.[1] ||
           "Nuestra aventura";
     }
+  }
 
-    document
-      .querySelector(".sidebar")
-      ?.classList.remove(
+  /* =======================================================
+     MOBILE MENU
+     ======================================================= */
+
+  function getMobileSidebar() {
+    return document.querySelector(
+      ".sidebar"
+    );
+  }
+
+  function createMobileMenuOverlay() {
+    if (
+      document.querySelector(
+        ".mobile-menu-overlay"
+      )
+    ) {
+      return;
+    }
+
+    const overlay =
+      document.createElement(
+        "div"
+      );
+
+    overlay.className =
+      "mobile-menu-overlay";
+
+    Object.assign(
+      overlay.style,
+      {
+        position:
+          "fixed",
+
+        inset:
+          "0",
+
+        zIndex:
+          "998",
+
+        background:
+          "rgba(20, 15, 30, 0.30)",
+
+        opacity:
+          "0",
+
+        visibility:
+          "hidden",
+
+        pointerEvents:
+          "none",
+
+        transition:
+          "opacity 0.25s ease, visibility 0.25s ease",
+
+        WebkitTapHighlightColor:
+          "transparent"
+      }
+    );
+
+    overlay.addEventListener(
+      "click",
+      event => {
+        event.preventDefault();
+
+        event.stopPropagation();
+
+        closeMobileMenu();
+      }
+    );
+
+    document.body.appendChild(
+      overlay
+    );
+
+    const sidebar =
+      getMobileSidebar();
+
+    if (sidebar) {
+      /*
+        El sidebar debe estar por encima
+        del overlay.
+      */
+
+      sidebar.style.zIndex =
+        "999";
+    }
+  }
+
+  function updateMobileMenuOverlay() {
+    const sidebar =
+      getMobileSidebar();
+
+    const overlay =
+      document.querySelector(
+        ".mobile-menu-overlay"
+      );
+
+    if (
+      !sidebar ||
+      !overlay
+    ) {
+      return;
+    }
+
+    const open =
+      sidebar.classList.contains(
         "open"
       );
+
+    overlay.style.opacity =
+      open
+        ? "1"
+        : "0";
+
+    overlay.style.visibility =
+      open
+        ? "visible"
+        : "hidden";
+
+    overlay.style.pointerEvents =
+      open
+        ? "auto"
+        : "none";
+  }
+
+  function openMobileMenu() {
+    const sidebar =
+      getMobileSidebar();
+
+    if (!sidebar) {
+      return;
+    }
+
+    createMobileMenuOverlay();
+
+    /*
+      Guardamos los valores originales para
+      restaurarlos al cerrar.
+    */
+
+    if (
+      !document.body.classList.contains(
+        "mobile-menu-open"
+      )
+    ) {
+      mobileMenuPreviousBodyOverflow =
+        document.body.style.overflow;
+
+      mobileMenuPreviousBodyTouchAction =
+        document.body.style.touchAction;
+    }
+
+    /*
+      Evita que la página de atrás
+      haga scroll mientras el menú está abierto.
+    */
+
+    document.body.style.overflow =
+      "hidden";
+
+    document.body.style.touchAction =
+      "pan-y";
+
+    document.body.classList.add(
+      "mobile-menu-open"
+    );
+
+    /*
+      Quitamos cualquier transformación
+      residual de un swipe anterior.
+    */
+
+    sidebar.style.transform =
+      "";
+
+    sidebar.style.transition =
+      "";
+
+    sidebar.classList.add(
+      "open"
+    );
+
+    updateMobileMenuOverlay();
+  }
+
+  function closeMobileMenu() {
+    const sidebar =
+      getMobileSidebar();
+
+    if (sidebar) {
+      sidebar.classList.remove(
+        "open"
+      );
+
+      /*
+        Limpiamos cualquier transformación
+        que haya quedado del swipe.
+      */
+
+      sidebar.style.transform =
+        "";
+
+      sidebar.style.transition =
+        "";
+    }
+
+    document.body.classList.remove(
+      "mobile-menu-open"
+    );
+
+    /*
+      Restauramos el scroll normal.
+    */
+
+    document.body.style.overflow =
+      mobileMenuPreviousBodyOverflow;
+
+    document.body.style.touchAction =
+      mobileMenuPreviousBodyTouchAction;
+
+    const overlay =
+      document.querySelector(
+        ".mobile-menu-overlay"
+      );
+
+    if (overlay) {
+      overlay.style.opacity =
+        "0";
+
+      overlay.style.visibility =
+        "hidden";
+
+      overlay.style.pointerEvents =
+        "none";
+    }
+
+    mobileMenuTouchActive =
+      false;
+
+    mobileMenuTouchStartX =
+      0;
+
+    mobileMenuTouchStartY =
+      0;
+
+    mobileMenuTouchCurrentX =
+      0;
+
+    mobileMenuTouchCurrentY =
+      0;
+  }
+
+  function toggleMobileMenu() {
+    const sidebar =
+      getMobileSidebar();
+
+    if (!sidebar) {
+      return;
+    }
+
+    if (
+      sidebar.classList.contains(
+        "open"
+      )
+    ) {
+      closeMobileMenu();
+    } else {
+      openMobileMenu();
+    }
+  }
+
+  function setupMobileMenuTouch() {
+    const sidebar =
+      getMobileSidebar();
+
+    if (
+      !sidebar ||
+      sidebar.dataset.mobileTouchReady ===
+        "true"
+    ) {
+      return;
+    }
+
+    sidebar.dataset.mobileTouchReady =
+      "true";
+
+    /*
+      TOUCH START
+    */
+
+    sidebar.addEventListener(
+      "touchstart",
+      event => {
+        if (
+          !sidebar.classList.contains(
+            "open"
+          )
+        ) {
+          return;
+        }
+
+        const touch =
+          event.touches?.[0];
+
+        if (!touch) {
+          return;
+        }
+
+        mobileMenuTouchStartX =
+          touch.clientX;
+
+        mobileMenuTouchStartY =
+          touch.clientY;
+
+        mobileMenuTouchCurrentX =
+          touch.clientX;
+
+        mobileMenuTouchCurrentY =
+          touch.clientY;
+
+        mobileMenuTouchActive =
+          true;
+
+        /*
+          Durante el gesto quitamos
+          temporalmente la transición.
+        */
+
+        sidebar.style.transition =
+          "none";
+      },
+      {
+        passive:
+          true
+      }
+    );
+
+    /*
+      TOUCH MOVE
+    */
+
+    sidebar.addEventListener(
+      "touchmove",
+      event => {
+        if (
+          !mobileMenuTouchActive ||
+          !sidebar.classList.contains(
+            "open"
+          )
+        ) {
+          return;
+        }
+
+        const touch =
+          event.touches?.[0];
+
+        if (!touch) {
+          return;
+        }
+
+        mobileMenuTouchCurrentX =
+          touch.clientX;
+
+        mobileMenuTouchCurrentY =
+          touch.clientY;
+
+        const deltaX =
+          mobileMenuTouchCurrentX -
+          mobileMenuTouchStartX;
+
+        const deltaY =
+          mobileMenuTouchCurrentY -
+          mobileMenuTouchStartY;
+
+        /*
+          Solo consideramos swipe horizontal
+          si el movimiento horizontal es mayor
+          que el vertical.
+
+          Además, solo permitimos swipe
+          hacia la izquierda.
+        */
+
+        if (
+          Math.abs(deltaX) <=
+          Math.abs(deltaY)
+        ) {
+          return;
+        }
+
+        if (deltaX >= 0) {
+          return;
+        }
+
+        const width =
+          Math.max(
+            sidebar.offsetWidth,
+            1
+          );
+
+        const amount =
+          Math.min(
+            Math.abs(deltaX),
+            width
+          );
+
+        sidebar.style.transform =
+          `translateX(-${amount}px)`;
+
+        const overlay =
+          document.querySelector(
+            ".mobile-menu-overlay"
+          );
+
+        if (overlay) {
+          const opacity =
+            Math.max(
+              0,
+              1 -
+                amount /
+                  width
+            );
+
+          overlay.style.opacity =
+            String(
+              opacity
+            );
+        }
+      },
+      {
+        passive:
+          true
+      }
+    );
+
+    /*
+      TOUCH END
+    */
+
+    sidebar.addEventListener(
+      "touchend",
+      () => {
+        if (
+          !mobileMenuTouchActive
+        ) {
+          return;
+        }
+
+        mobileMenuTouchActive =
+          false;
+
+        const deltaX =
+          mobileMenuTouchCurrentX -
+          mobileMenuTouchStartX;
+
+        const deltaY =
+          mobileMenuTouchCurrentY -
+          mobileMenuTouchStartY;
+
+        sidebar.style.transition =
+          "";
+
+        /*
+          Si se deslizó suficientemente
+          hacia la izquierda, cerramos.
+        */
+
+        if (
+          deltaX < -70 &&
+          Math.abs(deltaX) >
+            Math.abs(deltaY)
+        ) {
+          closeMobileMenu();
+
+          return;
+        }
+
+        /*
+          Si el swipe no fue suficiente,
+          regresamos el menú a su posición.
+        */
+
+        sidebar.style.transform =
+          "";
+
+        updateMobileMenuOverlay();
+      },
+      {
+        passive:
+          true
+      }
+    );
+
+    /*
+      TOUCH CANCEL
+    */
+
+    sidebar.addEventListener(
+      "touchcancel",
+      () => {
+        mobileMenuTouchActive =
+          false;
+
+        sidebar.style.transition =
+          "";
+
+        sidebar.style.transform =
+          "";
+
+        updateMobileMenuOverlay();
+      },
+      {
+        passive:
+          true
+      }
+    );
+  }
+
+  function initializeMobileMenu() {
+    if (
+      mobileMenuInitialized
+    ) {
+      return;
+    }
+
+    mobileMenuInitialized =
+      true;
+
+    createMobileMenuOverlay();
+
+    setupMobileMenuTouch();
+
+    updateMobileMenuOverlay();
+
+    /*
+      ESCAPE
+    */
+
+    document.addEventListener(
+      "keydown",
+      event => {
+        if (
+          event.key ===
+          "Escape"
+        ) {
+          const sidebar =
+            getMobileSidebar();
+
+          if (
+            sidebar?.classList.contains(
+              "open"
+            )
+          ) {
+            closeMobileMenu();
+          }
+        }
+      }
+    );
+
+    /*
+      Si la ventana cambia de tamaño,
+      eliminamos cualquier estado extraño
+      del drawer.
+    */
+
+    window.addEventListener(
+      "resize",
+      () => {
+        const sidebar =
+          getMobileSidebar();
+
+        if (!sidebar) {
+          return;
+        }
+
+        /*
+          Si el navegador vuelve a desktop,
+          no queremos dejar el overlay bloqueando
+          la página.
+        */
+
+        if (
+          !window.matchMedia(
+            "(max-width: 900px)"
+          ).matches
+        ) {
+          closeMobileMenu();
+        }
+      }
+    );
   }
 
   /* =======================================================
@@ -1883,11 +2497,6 @@
       `Abre la app:\n${BUILTIN_CONFIG.SITE_URL}\n\n` +
       `Crea tu cuenta y usa el código para unirte al grupo.`;
 
-    /*
-      En teléfonos modernos usamos el menú nativo
-      de compartir.
-    */
-
     if (
       navigator.share &&
       typeof navigator.share ===
@@ -1907,11 +2516,6 @@
 
         return;
       } catch (error) {
-        /*
-          Si el usuario cancela Share,
-          no mostramos error.
-        */
-
         if (
           error?.name ===
           "AbortError"
@@ -1920,11 +2524,6 @@
         }
       }
     }
-
-    /*
-      Si el navegador no tiene Share API,
-      copiamos el mensaje completo.
-    */
 
     try {
       await navigator.clipboard.writeText(
@@ -1937,10 +2536,6 @@
 
       return;
     } catch (_) {}
-
-    /*
-      Último recurso.
-    */
 
     prompt(
       "Copia esta invitación:",
@@ -4399,17 +4994,27 @@
         submitModal
       );
 
+    /*
+      ======================================================
+      MOBILE MENU
+
+      Antes:
+      sidebar.classList.toggle("open")
+
+      Ahora:
+      usamos el controlador completo del drawer.
+      ======================================================
+    */
+
     $("mobileMenuBtn")
       ?.addEventListener(
         "click",
-        () => {
-          document
-            .querySelector(
-              ".sidebar"
-            )
-            ?.classList.toggle(
-              "open"
-            );
+        event => {
+          event.preventDefault();
+
+          event.stopPropagation();
+
+          toggleMobileMenu();
         }
       );
 
@@ -4432,6 +5037,12 @@
   async function handleDelegatedClick(
     event
   ) {
+    /*
+      El botón del menú se maneja directamente
+      en bindEvents(), así que no hacemos nada
+      especial aquí con él.
+    */
+
     const nav =
       event.target.closest(
         ".nav-item"
