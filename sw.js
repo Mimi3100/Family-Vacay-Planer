@@ -1,1 +1,56 @@
-const CACHE="nuestra-aventura-v1";const ASSETS=["./","./index.html","./app.js","./styles.css","./config.js","./manifest.json"];self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));self.addEventListener("activate",e=>e.waitUntil(self.clients.claim()));self.addEventListener("fetch",e=>{if(e.request.method!=="GET")return;e.respondWith(caches.match(e.request).then(c=>c||fetch(e.request).then(r=>{const copy=r.clone();caches.open(CACHE).then(x=>x.put(e.request,copy));return r}).catch(()=>caches.match("./index.html"))))});
+/* =========================================================
+   NUESTRA AVENTURA · SERVICE WORKER
+   ========================================================= */
+
+/*
+   Esta versión NO cachea la aplicación.
+
+   La aplicación utiliza Supabase para los datos online
+   y localStorage para el modo offline.
+
+   Dejamos este archivo solamente para retirar cualquier
+   Service Worker/caché anterior que pudiera estar atrapado
+   en un teléfono o computadora.
+*/
+
+self.addEventListener("install", event => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    (async () => {
+
+      const cacheNames = await caches.keys();
+
+      await Promise.all(
+        cacheNames.map(cacheName =>
+          caches.delete(cacheName)
+        )
+      );
+
+      await self.clients.claim();
+
+      const clients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true
+      });
+
+      clients.forEach(client => {
+        client.postMessage({
+          type: "NUESTRA_AVENTURA_CACHE_CLEARED"
+        });
+      });
+
+    })()
+  );
+});
+
+/*
+   No interceptamos las solicitudes.
+   Todo se carga directamente desde la red.
+*/
+
+self.addEventListener("fetch", event => {
+  return;
+});
